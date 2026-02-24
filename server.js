@@ -4,6 +4,10 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 const crypto = require('crypto');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
+
+const execFileAsync = promisify(execFile);
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -18,6 +22,14 @@ const ITEMS_FILE = path.join(DATA_DIR, 'items.json');
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 app.use(express.static(PUBLIC_DIR));
+
+let configCache = null;
+const syncFolderResolveCache = {
+  key: null,
+  resolved: null,
+  checkedAtMs: 0
+};
+const SYNC_FOLDER_CACHE_TTL_MS = 15_000;
 
 ensureDataFiles();
 
@@ -69,13 +81,29 @@ function readJson(file, fallback) {
 }
 
 function writeJson(file, data) {
-  fs.writeFileSync(file, JSON.stringify(data, null, 2), 'utf8');
+  const dir = path.dirname(file);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+  const payload = JSON.stringify(data, null, 2);
+  const tmpFile = path.join(
+    dir,
+    `.${path.basename(file)}.${process.pid}.${Date.now()}.${crypto.randomBytes(6).toString('hex')}.tmp`
+  );
+
+  try {
+    fs.writeFileSync(tmpFile, payload, 'utf8');
+    fs.renameSync(tmpFile, file);
+  } finally {
+    if (fs.existsSync(tmpFile)) {
+      try { fs.unlinkSync(tmpFile); } catch {}
+    }
+  }
 }
 
 function getConfig() {
+  if (configCache) return configCache;
   const cfg = readJson(CONFIG_FILE, defaultConfig());
-  // Merge with defaults so upgrades don't break old config files
-  return {
+  configCache = {
     ...defaultConfig(),
     ...cfg,
     openai: { ...defaultConfig().openai, ...(cfg.openai || {}) },
@@ -85,10 +113,30 @@ function getConfig() {
       defaults: { ...defaultConfig().etsy.defaults, ...((cfg.etsy || {}).defaults || {}) }
     }
   };
+  return configCache;
 }
 
 function saveConfig(nextCfg) {
-  writeJson(CONFIG_FILE, nextCfg);
+  const merged = {
+    ...defaultConfig(),
+    ...(nextCfg || {}),
+    openai: { ...defaultConfig().openai, ...((nextCfg || {}).openai || {}) },
+    etsy: {
+      ...defaultConfig().etsy,
+      ...((nextCfg || {}).etsy || {}),
+      defaults: { ...defaultConfig().etsy.defaults, ...(((nextCfg || {}).etsy || {}).defaults || {}) }
+    }
+  };
+
+  writeJson(CONFIG_FILE, merged);
+  configCache = merged;
+  const currentFolder = String(merged.syncFolder || '').trim();
+  if (syncFolderResolveCache.key !== currentFolder) {
+    syncFolderResolveCache.key = null;
+    syncFolderResolveCache.resolved = null;
+    syncFolderResolveCache.checkedAtMs = 0;
+  }
+  return merged;
 }
 
 function sanitizeForClientConfig(cfg) {
@@ -102,9 +150,23 @@ function errorResponse(res, status, message, details) {
 function resolveSyncFolder(cfg) {
   const folder = cfg.syncFolder?.trim();
   if (!folder) throw new Error('Sync folder not set. Save a sync folder path in Settings first.');
+
+  const now = Date.now();
+  if (
+    syncFolderResolveCache.key === folder &&
+    syncFolderResolveCache.resolved &&
+    now - syncFolderResolveCache.checkedAtMs < SYNC_FOLDER_CACHE_TTL_MS
+  ) {
+    return syncFolderResolveCache.resolved;
+  }
+
   if (!fs.existsSync(folder)) throw new Error(`Sync folder does not exist: ${folder}`);
   if (!fs.statSync(folder).isDirectory()) throw new Error(`Sync folder is not a directory: ${folder}`);
-  return path.resolve(folder);
+  const resolved = path.resolve(folder);
+  syncFolderResolveCache.key = folder;
+  syncFolderResolveCache.resolved = resolved;
+  syncFolderResolveCache.checkedAtMs = now;
+  return resolved;
 }
 
 function isImageFile(fileName) {
@@ -141,10 +203,35 @@ async function walkImages(rootDir, maxCount = 500) {
   return out.slice(0, maxCount);
 }
 
+function safeResolveDirUnder(rootDir, relDir) {
+  const rel = String(relDir || '').trim();
+  const resolvedRoot = path.resolve(rootDir);
+  const normalizedRel = rel.replace(/\\/g, '/').replace(/^\/+/, '');
+  const full = path.resolve(resolvedRoot, normalizedRel || '.');
+  const relative = path.relative(resolvedRoot, full);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new Error('Invalid folder path');
+  }
+  return full;
+}
+
+function normalizeRelPath(rel) {
+  const trimmed = String(rel || '').replace(/\\/g, '/').replace(/^\/+/, '').trim();
+  if (!trimmed || trimmed === '.') return '';
+  return trimmed.replace(/\/+$/, '');
+}
+
 function safeResolveUnder(rootDir, relPath) {
-  const normalizedRel = relPath.replace(/\\/g, '/').replace(/^\/+/, '');
-  const full = path.resolve(rootDir, normalizedRel);
-  if (!full.startsWith(rootDir)) {
+  const rel = String(relPath || '').trim();
+  if (!rel) throw new Error('Invalid file path');
+
+  const resolvedRoot = path.resolve(rootDir);
+  const normalizedRel = rel.replace(/\\/g, '/').replace(/^\/+/, '');
+  const full = path.resolve(resolvedRoot, normalizedRel);
+  const relative = path.relative(resolvedRoot, full);
+
+  // Robust containment check: reject parent traversal and absolute escapes.
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
     throw new Error('Invalid file path');
   }
   return full;
@@ -184,6 +271,50 @@ function etsyRedirectUri() {
 }
 function appBaseUrl() {
   return (process.env.APP_BASE_URL || `http://localhost:${PORT}`).trim();
+}
+
+async function openFolderPicker(initialDirectory) {
+  if (process.platform !== 'win32') {
+    throw new Error('Native folder picker is only implemented for Windows in this app.');
+  }
+
+  const initialDir = String(initialDirectory || '').trim();
+  const initialDirEscaped = initialDir.replace(/'/g, "''");
+  const psScript = [
+    'Add-Type -AssemblyName System.Windows.Forms',
+    '$dialog = New-Object System.Windows.Forms.OpenFileDialog',
+    '$dialog.Title = "Select your photo folder"',
+    '$dialog.Filter = "Folders|*.folder"',
+    '$dialog.CheckFileExists = $false',
+    '$dialog.CheckPathExists = $true',
+    '$dialog.ValidateNames = $false',
+    '$dialog.FileName = "Select Folder"',
+    `$initial = '${initialDirEscaped}'`,
+    'if ($initial -and (Test-Path -LiteralPath $initial -PathType Container)) { $dialog.InitialDirectory = $initial }',
+    '$result = $dialog.ShowDialog()',
+    '$raw = $dialog.FileName',
+    '$chosen = ""',
+    'if ($result -eq [System.Windows.Forms.DialogResult]::OK) {',
+    '  if ($raw -and (Test-Path -LiteralPath $raw -PathType Container)) {',
+    '    $chosen = $raw',
+    '  } else {',
+    '    $chosen = [System.IO.Path]::GetDirectoryName($raw)',
+    '  }',
+    '  if ($chosen) { Write-Output $chosen }',
+    '}'
+  ].join('; ');
+
+  const { stdout } = await execFileAsync('powershell.exe', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-Command',
+    psScript
+  ]);
+
+  const selected = String(stdout || '').trim();
+  return selected || null;
 }
 
 function createPkcePair() {
@@ -263,6 +394,20 @@ function listingOutputSchema() {
   };
 }
 
+function normalizeTextForMatch(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function containsNormalizedText(haystack, needle) {
+  const h = normalizeTextForMatch(haystack);
+  const n = normalizeTextForMatch(needle);
+  return Boolean(n) && h.includes(n);
+}
+
 function buildGeneratePrompt({ intake, cfg, selectedImages }) {
   const safe = (v) => (v == null ? '' : String(v));
   const lines = [
@@ -270,8 +415,9 @@ function buildGeneratePrompt({ intake, cfg, selectedImages }) {
     'If a detail is unknown, say unknown or omit the claim.',
     'Keep tone clear, helpful, and resale-appropriate.',
     'Return JSON matching the schema exactly.',
+    'Important: Do not include generic shipping/policy boilerplate in the description. The app appends seller policy text separately after generation.',
     '',
-    'Seller policy text to append conceptually (do not duplicate excessively):',
+    'Seller policy text managed by app (for reference only, do not repeat it in description):',
     safe(cfg.listingPolicyText),
     '',
     'Item intake:',
@@ -295,7 +441,7 @@ function buildGeneratePrompt({ intake, cfg, selectedImages }) {
     '',
     `Number of selected images: ${selectedImages.length}`,
     'Create title within Etsy-friendly length (aim ~100-140 chars max, front-load keywords).',
-    'Description should include a brief opening paragraph, bullet-like specs (but also return bullet_specs array), condition paragraph, shipping/policy paragraph.',
+    'Description should include a brief opening paragraph, bullet-like specs (but also return bullet_specs array), and condition paragraph.',
     'Condition note should be concise and factual.',
     'Tags should be short keyword phrases suitable for marketplace listing fields.'
   ];
@@ -378,8 +524,8 @@ async function callOpenAIForListing({ intake, selectedImages, includeImages, cfg
 
   // append policy text once to description if not present
   const policy = cfg.listingPolicyText?.trim();
-  if (policy && parsed.description && !parsed.description.includes('Please look closely at the pictures')) {
-    parsed.description = `${parsed.description}\n\n${policy}`;
+  if (policy && parsed.description && !containsNormalizedText(parsed.description, policy)) {
+    parsed.description = `${String(parsed.description).trim()}\n\n${policy}`;
   }
   return { parsed, raw: json };
 }
@@ -530,10 +676,79 @@ app.post('/api/config', (req, res) => {
         defaults: { ...current.etsy.defaults, ...((incoming.etsy || {}).defaults || {}) }
       }
     };
-    saveConfig(next);
-    res.json({ ok: true, config: sanitizeForClientConfig(next) });
+    const saved = saveConfig(next);
+    res.json({ ok: true, config: sanitizeForClientConfig(saved) });
   } catch (err) {
     errorResponse(res, 500, err.message);
+  }
+});
+
+app.post('/api/browse-folder', async (req, res) => {
+  try {
+    const folder = await openFolderPicker(req.body?.initialDirectory);
+    res.json({ ok: true, folder, cancelled: !folder });
+  } catch (err) {
+    errorResponse(res, 400, err.message);
+  }
+});
+
+app.get('/api/folder-contents', async (req, res) => {
+  try {
+    const cfg = getConfig();
+    const root = resolveSyncFolder(cfg);
+    const relDir = normalizeRelPath(req.query.relDir || '');
+    const fullDir = safeResolveDirUnder(root, relDir);
+    if (!fs.existsSync(fullDir)) return errorResponse(res, 404, 'Folder not found');
+    if (!fs.statSync(fullDir).isDirectory()) return errorResponse(res, 400, 'Selected path is not a folder');
+
+    const entries = await fsp.readdir(fullDir, { withFileTypes: true });
+    const folders = [];
+    const imageEntries = [];
+
+    for (const entry of entries) {
+      const full = path.join(fullDir, entry.name);
+      if (entry.isDirectory()) {
+        const childRel = normalizeRelPath(path.relative(root, full));
+        folders.push({ name: entry.name, relDir: childRel });
+        continue;
+      }
+      if (entry.isFile() && isImageFile(entry.name)) {
+        imageEntries.push({ name: entry.name, full });
+      }
+    }
+
+    const images = (await Promise.all(
+      imageEntries.map(async (img) => {
+        try {
+          const st = await fsp.stat(img.full);
+          const relPath = normalizeRelPath(path.relative(root, img.full));
+          return {
+            relPath,
+            name: img.name,
+            size: st.size,
+            mtimeMs: st.mtimeMs,
+            previewUrl: `/api/photo?relPath=${encodeURIComponent(relPath)}`
+          };
+        } catch {
+          return null;
+        }
+      })
+    )).filter(Boolean);
+
+    folders.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    images.sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+    const parentRelDir = relDir ? normalizeRelPath(path.dirname(relDir)) : null;
+    res.json({
+      ok: true,
+      root,
+      relDir,
+      parentRelDir,
+      folders,
+      images
+    });
+  } catch (err) {
+    errorResponse(res, 400, err.message);
   }
 });
 
@@ -564,8 +779,11 @@ app.get('/api/photo', (req, res) => {
     if (!relPath) return errorResponse(res, 400, 'relPath is required');
     const root = resolveSyncFolder(getConfig());
     const full = safeResolveUnder(root, relPath);
-    if (!fs.existsSync(full)) return errorResponse(res, 404, 'File not found');
-    res.sendFile(full);
+    res.sendFile(full, (err) => {
+      if (!err || res.headersSent) return;
+      if (err.code === 'ENOENT') return errorResponse(res, 404, 'File not found');
+      return errorResponse(res, 500, 'Failed to read image file');
+    });
   } catch (err) {
     errorResponse(res, 400, err.message);
   }

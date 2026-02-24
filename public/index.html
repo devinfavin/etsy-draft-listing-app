@@ -9,8 +9,8 @@
 <body>
   <header class="topbar">
     <div>
-      <h1>Etsy Draft Listing App</h1>
-      <p>Photos → Intake form → AI listing → Etsy draft (unpublished)</p>
+      <h1>Etsy Draft Listing Assistant</h1>
+      <p>Follow each step in order to create an Etsy draft listing.</p>
     </div>
     <div class="status-badges">
       <span id="healthBadge" class="badge">Server: ...</span>
@@ -19,190 +19,244 @@
   </header>
 
   <main class="layout">
-    <section class="panel">
-      <h2>1) Settings</h2>
-      <div class="grid two">
-        <label>Sync folder path
-          <input id="syncFolder" type="text" placeholder="C:\\Users\\you\\OneDrive\\Mugs" />
-        </label>
-        <label>OpenAI model
-          <input id="openaiModel" type="text" placeholder="gpt-4.1-mini" />
-        </label>
-        <label>Etsy shop ID
-          <input id="etsyShopId" type="text" placeholder="12345678" />
-        </label>
-        <label>Max images sent to AI (vision)
-          <input id="maxImagesForVision" type="number" min="1" max="8" />
+    <section class="wizard-progress panel">
+      <div class="progress-label">Step <span id="progressCurrent">1</span> of <span id="progressTotal">5</span></div>
+      <div id="progressBar" class="progress-bar" role="progressbar" aria-valuemin="1" aria-valuemax="5" aria-valuenow="1">
+        <div id="progressFill" class="progress-fill"></div>
+      </div>
+      <div id="stepTitle" class="step-title">Setup</div>
+    </section>
+
+    <section id="step1" class="panel step-panel">
+      <h2>Step 1: One-time setup</h2>
+      <p class="help">Set these once, then you can reuse them for future listings.</p>
+      <div class="grid one">
+        <label>Photo folder path
+          <div class="field-with-button">
+            <input id="syncFolder" type="text" placeholder="C:\\Users\\you\\OneDrive\\Mugs" />
+            <button id="browseSyncFolderBtn" type="button" class="secondary">Browse</button>
+          </div>
         </label>
       </div>
+      <p id="shopSummary" class="help">Store: not set yet (configure in advanced settings below)</p>
 
-      <h3>Etsy draft defaults (required for physical listings)</h3>
-      <div class="grid three">
-        <label>Default quantity
-          <input id="dQuantity" type="number" min="1" value="1" />
-        </label>
-        <label>who_made
-          <select id="dWhoMade">
-            <option value="someone_else">someone_else</option>
-            <option value="i_did">i_did</option>
-            <option value="collective">collective</option>
-          </select>
-        </label>
-        <label>when_made
-          <input id="dWhenMade" type="text" placeholder="before_2000 or made_to_order" />
-        </label>
-        <label>taxonomy_id
-          <input id="dTaxonomyId" type="text" placeholder="Etsy taxonomy ID" />
-        </label>
-        <label>shipping_profile_id
-          <input id="dShippingProfileId" type="text" placeholder="Required for physical items" />
-        </label>
-        <label>readiness_state_id
-          <input id="dReadinessStateId" type="text" placeholder="Required for physical items" />
-        </label>
-      </div>
+      <details class="advanced">
+        <summary>Advanced Etsy defaults (required for draft API)</summary>
+        <div class="grid three pad-top">
+          <label>Etsy shop ID (set once)
+            <input id="etsyShopId" type="text" placeholder="12345678" />
+          </label>
+          <label>who_made
+            <select id="dWhoMade">
+              <option value="someone_else">someone_else</option>
+              <option value="i_did">i_did</option>
+              <option value="collective">collective</option>
+            </select>
+          </label>
+          <label>when_made
+            <input id="dWhenMade" type="text" placeholder="before_2000" />
+          </label>
+          <label>taxonomy_id
+            <input id="dTaxonomyId" type="text" placeholder="Category taxonomy ID" />
+          </label>
+          <label>shipping_profile_id
+            <input id="dShippingProfileId" type="text" placeholder="Shipping profile ID" />
+          </label>
+          <label>readiness_state_id
+            <input id="dReadinessStateId" type="text" placeholder="Readiness state ID" />
+          </label>
+          <label>Default quantity
+            <input id="dQuantity" type="number" min="1" value="1" />
+          </label>
+          <label>OpenAI model (optional)
+            <input id="openaiModel" type="text" placeholder="gpt-4.1-mini" />
+          </label>
+        </div>
+      </details>
 
-      <label class="block">Listing policy text appended to AI description
-        <textarea id="listingPolicyText" rows="4"></textarea>
+      <label class="block">Listing policy text appended to the AI description
+        <textarea id="listingPolicyText" rows="3"></textarea>
       </label>
 
-      <div class="row gap">
-        <button id="saveConfigBtn">Save Settings</button>
-        <button id="refreshPhotosBtn" class="secondary">Refresh Photos</button>
-        <button id="connectEtsyBtn" class="secondary">Connect Etsy</button>
-      </div>
-      <p class="help">Tip: Etsy OAuth redirect must be HTTPS and match your Etsy app settings exactly.</p>
-    </section>
-
-    <section class="panel">
-      <h2>2) Photo selection</h2>
       <div class="row gap wrap">
-        <label class="inline">Search file name
-          <input id="photoSearch" type="text" placeholder="mug, glass, brand..." />
-        </label>
-        <label class="inline checkbox-inline">
-          <input id="includeImagesInAi" type="checkbox" />
-          Include selected images in AI prompt (vision)
-        </label>
+        <button id="saveConfigBtn">Save Setup</button>
+        <button id="connectEtsyBtn" class="secondary">Connect Etsy</button>
+        <button id="toStep2Btn">Continue to Photos</button>
       </div>
-      <div class="photo-grid-wrap">
-        <div id="photoGrid" class="photo-grid"></div>
-      </div>
-
-      <h3>Selected images (drag not implemented yet — use reorder buttons)</h3>
-      <div id="selectedList" class="selected-list"></div>
+      <p class="help">Tip: Etsy OAuth callback must be HTTPS and match Etsy app settings exactly.</p>
     </section>
 
-    <section class="panel">
-      <h2>3) Intake form</h2>
-      <div class="grid three">
-        <label>Item type
-          <input id="f_type" type="text" placeholder="Coffee mug, wine glass, tumbler..." />
+    <section id="step2" class="panel step-panel hidden">
+      <h2>Step 2: Choose photos</h2>
+      <div class="help">Browse folders and photos like File Explorer. Open folders with one click and select photos with one click.</div>
+
+      <div class="explorer-shell">
+        <div class="explorer-toolbar">
+          <button id="folderUpBtn" class="secondary icon-btn" type="button" aria-label="Back" title="Back">
+            <span aria-hidden="true">&#x2190;</span>
+          </button>
+          <button id="refreshFolderBtn" class="secondary icon-btn" type="button" aria-label="Refresh" title="Refresh">
+            <span aria-hidden="true">&#x21bb;</span>
+          </button>
+          <div id="folderPath" class="address-bar"></div>
+        </div>
+        <div id="folderBreadcrumbs" class="breadcrumbs"></div>
+        <div class="explorer-content">
+          <div id="photoGrid" class="browser-grid"></div>
+        </div>
+      </div>
+
+      <h3>Selected photos (drag left to right to reorder)</h3>
+      <div id="selectedStrip" class="selected-strip"></div>
+      <div class="help">The left-most photo becomes your first listing image.</div>
+
+      <div class="row gap wrap">
+        <button id="clearSelectionBtn" class="secondary" type="button">Clear Selection</button>
+      </div>
+
+      <div class="row gap wrap nav-row">
+        <button id="backToStep1Btn" class="secondary">Back</button>
+        <button id="toStep3Btn">Continue to Item Details</button>
+      </div>
+    </section>
+
+    <section id="step3" class="panel step-panel hidden">
+      <h2>Step 3: Item details</h2>
+      <p class="help">Only a few details are required. Keep it simple.</p>
+      <p class="help">Fields marked with <span class="required-star">*</span> are required.</p>
+      <div class="grid two">
+        <label><span class="field-label">Item type<span class="required-star">*</span></span>
+          <input id="f_type" type="text" placeholder="Coffee mug" required />
         </label>
-        <label>Brand
-          <input id="f_brand" type="text" />
+        <label><span class="field-label">Brand</span>
+          <input id="f_brand" type="text" placeholder="Optional" />
         </label>
-        <label>Title hint
-          <input id="f_titleHint" type="text" placeholder="Optional title guidance" />
+        <label><span class="field-label">Price<span class="required-star">*</span></span>
+          <input id="f_price" type="text" placeholder="18.99" required />
         </label>
-        <label>Capacity
-          <input id="f_capacity" type="text" placeholder="12 oz" />
-        </label>
-        <label>Material
-          <input id="f_material" type="text" placeholder="Ceramic, glass..." />
-        </label>
-        <label>Price
-          <input id="f_price" type="text" placeholder="18.99" />
-        </label>
-        <label>Quantity
+        <label><span class="field-label">Quantity</span>
           <input id="f_quantity" type="number" min="1" value="1" />
         </label>
-        <label>Dimensions
-          <input id="f_dimensions" type="text" placeholder="H x W" />
-        </label>
-        <label>Weight
-          <input id="f_weight" type="text" placeholder="Optional packed/unpacked" />
-        </label>
-        <label>Microwave safe
-          <select id="f_microwaveSafe">
-            <option value="Unknown">Unknown</option>
-            <option value="Yes">Yes</option>
-            <option value="No">No</option>
-          </select>
-        </label>
-        <label>Dishwasher safe
-          <select id="f_dishwasherSafe">
-            <option value="Unknown">Unknown</option>
-            <option value="Yes">Yes</option>
-            <option value="No">No</option>
-          </select>
-        </label>
-        <label>Era / age
-          <input id="f_era" type="text" placeholder="1990s, modern, unknown" />
-        </label>
       </div>
-
-      <label class="block">Pattern / style / color
-        <input id="f_patternStyleColor" type="text" />
+      <label class="block"><span class="field-label">Condition summary</span>
+        <input id="f_conditionSummary" type="text" placeholder="Used, very good, no chips" />
       </label>
-      <label class="block">Condition summary
-        <input id="f_conditionSummary" type="text" placeholder="Used, very good, no chips/cracks" />
+      <label class="block"><span class="field-label">Defects or wear (optional)</span>
+        <textarea id="f_defects" rows="2" placeholder="Small scratch on handle"></textarea>
       </label>
-      <label class="block">Defects / wear details
-        <textarea id="f_defects" rows="2" placeholder="Any chips, scratches, fading, utensil marks, clouding, etc."></textarea>
-      </label>
-      <label class="block">Markings / stamp / SKU
-        <input id="f_markings" type="text" />
-      </label>
-      <label class="block">Additional notes
-        <textarea id="f_notes" rows="3"></textarea>
+      <label class="block"><span class="field-label">Notes for AI (optional)</span>
+        <textarea id="f_notes" rows="3" placeholder="Any important details to include"></textarea>
       </label>
 
-      <div class="row gap">
-        <button id="generateBtn">Generate Listing (AI)</button>
+      <details class="advanced">
+        <summary>More optional details</summary>
+        <div class="grid three pad-top">
+          <label>Title hint
+            <input id="f_titleHint" type="text" />
+          </label>
+          <label>Capacity
+            <input id="f_capacity" type="text" placeholder="12 oz" />
+          </label>
+          <label>Material
+            <input id="f_material" type="text" placeholder="Ceramic" />
+          </label>
+          <label>Dimensions
+            <input id="f_dimensions" type="text" placeholder="H x W" />
+          </label>
+          <label>Weight
+            <input id="f_weight" type="text" />
+          </label>
+          <label>Pattern/style/color
+            <input id="f_patternStyleColor" type="text" />
+          </label>
+          <label>Microwave safe
+            <select id="f_microwaveSafe">
+              <option value="Unknown">Unknown</option>
+              <option value="Yes">Yes</option>
+              <option value="No">No</option>
+            </select>
+          </label>
+          <label>Dishwasher safe
+            <select id="f_dishwasherSafe">
+              <option value="Unknown">Unknown</option>
+              <option value="Yes">Yes</option>
+              <option value="No">No</option>
+            </select>
+          </label>
+          <label>Era/age
+            <input id="f_era" type="text" placeholder="1990s" />
+          </label>
+          <label>Markings/stamp
+            <input id="f_markings" type="text" />
+          </label>
+        </div>
+      </details>
+
+      <div class="row gap wrap nav-row">
+        <button id="backToStep2Btn" class="secondary">Back</button>
+        <button id="generateBtn">Generate Listing</button>
       </div>
     </section>
 
-    <section class="panel">
-      <h2>4) Generated output</h2>
+    <section id="step4" class="panel step-panel hidden">
+      <h2>Step 4: Review AI listing</h2>
       <label class="block">Title
         <input id="o_title" type="text" />
       </label>
-      <label class="block">Short blurb
-        <textarea id="o_short_blurb" rows="2"></textarea>
-      </label>
-      <label class="block">Condition note
-        <textarea id="o_condition_note" rows="2"></textarea>
-      </label>
-      <label class="block">Description (use for Etsy)
+      <label class="block">Description
         <textarea id="o_description" rows="10"></textarea>
-      </label>
-      <label class="block">Bullet specs (one per line)
-        <textarea id="o_bullet_specs" rows="6"></textarea>
       </label>
       <label class="block">Tags (comma separated)
         <textarea id="o_tags" rows="2"></textarea>
       </label>
-      <label class="block">Materials (comma separated)
-        <input id="o_materials" type="text" />
-      </label>
-      <label class="block">Colors (comma separated)
-        <input id="o_colors" type="text" />
-      </label>
-      <label class="block">Image alt text (one per line)
-        <textarea id="o_alt_text" rows="6"></textarea>
-      </label>
+      <details class="advanced">
+        <summary>More generated fields</summary>
+        <div class="pad-top">
+          <label class="block">Short blurb
+            <textarea id="o_short_blurb" rows="2"></textarea>
+          </label>
+          <label class="block">Condition note
+            <textarea id="o_condition_note" rows="2"></textarea>
+          </label>
+          <label class="block">Bullet specs (one per line)
+            <textarea id="o_bullet_specs" rows="6"></textarea>
+          </label>
+          <label class="block">Materials (comma separated)
+            <input id="o_materials" type="text" />
+          </label>
+          <label class="block">Colors (comma separated)
+            <input id="o_colors" type="text" />
+          </label>
+          <label class="block">Image alt text (one per line)
+            <textarea id="o_alt_text" rows="6"></textarea>
+          </label>
+        </div>
+      </details>
 
-      <div class="row gap wrap">
-        <button id="copyDescriptionBtn" class="secondary">Copy Description</button>
+      <div class="row gap wrap nav-row">
+        <button id="backToStep3Btn" class="secondary">Back</button>
         <button id="copyTitleBtn" class="secondary">Copy Title</button>
+        <button id="copyDescriptionBtn" class="secondary">Copy Description</button>
+        <button id="toStep5Btn">Continue to Etsy Draft</button>
+      </div>
+    </section>
+
+    <section id="step5" class="panel step-panel hidden">
+      <h2>Step 5: Create Etsy draft</h2>
+      <p class="help">This creates an unpublished draft in Etsy and uploads your selected photos.</p>
+      <div class="summary-box">
+        <div><strong>Photos selected:</strong> <span id="summaryPhotoCount">0</span></div>
+        <div><strong>Price:</strong> <span id="summaryPrice">-</span></div>
+      </div>
+      <div class="row gap wrap nav-row">
+        <button id="backToStep4Btn" class="secondary">Back</button>
         <button id="createEtsyDraftBtn">Create Etsy Draft (Unpublished)</button>
       </div>
       <div id="etsyResult" class="result-box"></div>
     </section>
 
     <section class="panel">
-      <h2>Log</h2>
+      <h2>Activity Log</h2>
       <pre id="log"></pre>
     </section>
   </main>
