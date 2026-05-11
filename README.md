@@ -1,114 +1,221 @@
-# Etsy Draft Listing App (Local MVP)
+# Etsy Draft Listing Assistant
 
-A local web app that helps you:
+A guided desktop app that turns a folder of product photos into Etsy draft listings using Anthropic Claude. Built for non-technical sellers running 2–3 small Etsy shops.
 
-1. Read product photos from a synced cloud folder on your PC
-2. Select photos for a listing
-3. Fill out an intake form
-4. Generate an Etsy-ready listing using OpenAI
-5. Create an **Etsy draft (unpublished)** and upload selected images for final review
+---
 
-## What this MVP includes
+## What it does
 
-- Local photo browser (recursive scan of your sync folder)
-- Manual image selection and ordering
-- Intake form in the same app
-- AI-generated title/description/spec bullets/tags/materials/alt text
-- Etsy OAuth connect (Authorization Code + PKCE)
-- Etsy draft creation + image upload
-- Local save of generated records (`data/items.json`)
+A 5-step wizard:
 
-## Requirements
+1. **Setup** — point at a photo folder, set the listing policy text appended to descriptions
+2. **Choose photos** — file-explorer browser; click photos to add them in order; the first one gets a **COVER** badge
+3. **Item details** — what it is, price, quantity, era, readiness state, shipping profile, plus a free-text "anything the photos don't show?" catch-all
+4. **Review AI listing** — Claude returns title, description, tags, alt text, and matches the Etsy taxonomy automatically
+5. **Create Etsy draft** — uploads the listing as an unpublished draft on Etsy with the photos in the chosen order
 
-- **Node.js 20+**
-- An **OpenAI API key**
-- An **Etsy developer app** (Open API v3)
-- A synced photo folder (OneDrive, Google Drive for Desktop, Dropbox, iCloud for Windows, etc.)
-- A valid **HTTPS callback URL** for Etsy OAuth (Etsy requires HTTPS redirect URIs)
+The app supports up to 2 Etsy stores, each with its own OAuth, shipping profiles, readiness states, and last-used folder. Drafts are never published — final review and publish always happen in Etsy's seller dashboard.
 
-## Setup
+---
 
-1. Install dependencies
+## Prerequisites
 
-```bash
-npm install
-```
+For the **administrator** setting up the app:
 
-2. Copy environment file
+- **Node.js 20+** (only needed to build the desktop app — the end user does not need Node)
+- An **Anthropic API key** — https://console.anthropic.com/
+- An **Etsy developer app** registered at https://www.etsy.com/developers/your-apps with:
+  - Scopes: `listings_r listings_w shops_r`
+  - Redirect URI matching exactly what you put in `.env` (e.g., `http://localhost:3000/auth/etsy/callback`)
 
-```bash
-cp .env.example .env
-```
+For the **end user** running the packaged app:
 
-3. Edit `.env` with your keys and Etsy OAuth config
+- Windows 10 or 11
+- The installed `.exe` (built by the administrator below)
+- A folder of product photos (OneDrive / Google Drive / local folder all fine)
 
-Required:
-- `OPENAI_API_KEY`
-- `ETSY_CLIENT_ID`
-- `ETSY_X_API_KEY`
-- `ETSY_REDIRECT_URI`
+---
 
-4. Start the app
+## First-time setup (administrator)
 
-```bash
+1. Clone or copy this repo to your machine and open a terminal in the project folder.
+
+2. Install dependencies:
+   ```powershell
+   npm install
+   ```
+
+3. Build the Windows installer:
+   ```powershell
+   npm run build:win
+   ```
+   Output lands in `dist-electron/`. You'll get both:
+   - `Etsy Draft Listing Assistant Setup <version>.exe` — installer (NSIS)
+   - `Etsy Draft Listing Assistant <version>.exe` — portable single-file build
+
+4. Copy the installer to the user's machine and run it. By default it installs to `C:\Program Files\Etsy Draft Listing Assistant\` and creates a Desktop shortcut.
+
+5. **First launch** seeds an empty `.env` at:
+   ```
+   %APPDATA%\Etsy Draft Listing Assistant\.env
+   ```
+   Open that file in Notepad and fill in:
+   ```
+   ANTHROPIC_API_KEY=sk-ant-...
+   ETSY_CLIENT_ID=your_etsy_keystring
+   ETSY_X_API_KEY=your_etsy_keystring:your_shared_secret
+   ETSY_REDIRECT_URI=http://localhost:3000/auth/etsy/callback
+   ```
+   Save, then restart the app. The yellow "Setup needed" banner at the top of the app disappears once all four keys are present.
+
+6. Inside the app, click the connection pill (top-right) for each store you want to use → it opens Etsy's OAuth flow in the user's default browser → after granting permission, the app auto-fetches the shop name and shop ID.
+
+---
+
+## Daily usage (end user)
+
+Double-click the desktop shortcut → the app opens in its own window.
+
+- Connection state is shown by the pill in the top-right:
+  - **Green pill** = connected; clicking it opens a menu to **Disconnect** that store
+  - **Amber pill** = not connected; clicking it starts Etsy OAuth in the user's browser
+  - **Red pill** = something is wrong (server offline, etc.)
+- The store switcher next to the pill is **only available on Step 1**. To switch stores mid-flow, return to Step 1.
+- After a draft is created, click **New Listing** to start over.
+
+---
+
+## Where things live
+
+| What | Path |
+|---|---|
+| `.env` (API keys) | `%APPDATA%\Etsy Draft Listing Assistant\.env` |
+| App config (folder, policy, store labels) | `%APPDATA%\Etsy Draft Listing Assistant\data\config.json` |
+| Etsy OAuth tokens | `%APPDATA%\Etsy Draft Listing Assistant\data\etsy_tokens.json` |
+| Generated listing records | `%APPDATA%\Etsy Draft Listing Assistant\data\items.json` |
+| Photo thumbnail cache | `%APPDATA%\Etsy Draft Listing Assistant\data\thumb-cache\` |
+
+You can open this folder from inside the app: **File menu → Open config folder**.
+
+---
+
+## Rotating API keys
+
+If you need to update the Anthropic key or Etsy credentials:
+
+1. Close the app
+2. Edit `%APPDATA%\Etsy Draft Listing Assistant\.env`
+3. Save and reopen the app
+
+OAuth tokens (the per-store Etsy access/refresh tokens) refresh automatically — you only edit `.env` when the long-lived API keys themselves change, which is rare.
+
+---
+
+## Sending the activity log to support
+
+Inside the app:
+
+1. Scroll to the bottom and click **Activity log** to expand it
+2. Click **Copy log to send to support**
+3. Paste into an email or chat to whoever is helping
+
+What gets included in the support bundle:
+
+- App version, Node/Electron versions, OS/arch, server start time
+- Whether each required `.env` key is set (no actual key values)
+- Sync folder path + accessibility check, listing policy length, active store
+- Per-store: connection status, token expiry, scopes, shop ID, last folder, defaults
+- File presence checks (`config.json`, `etsy_tokens.json`, `.env`, etc.)
+- Wizard state (current step, photo count, AI taxonomy match, etc.)
+- Browser/window info (user agent, locale, theme, timezone)
+- The last 200 activity log entries — including any technical detail logged from API errors
+
+What's **not** included: API keys, OAuth access/refresh tokens, photo contents.
+
+---
+
+## Updating to a new version
+
+1. Build the new installer on the development machine: `npm run build:win`
+2. Copy the new `Etsy Draft Listing Assistant Setup <version>.exe` to the user's PC
+3. Run it — Windows / NSIS detects the prior install and replaces files in place
+
+**What's preserved across updates:** the user's `.env`, store config, OAuth tokens, last-used folder, photo thumbnail cache — everything in `%APPDATA%\Etsy Draft Listing Assistant\`.
+
+**What changes:** the application files in `Program Files\Etsy Draft Listing Assistant\` (the `.exe`, bundled Node modules, public assets).
+
+The Desktop and Start Menu shortcuts continue to work after the update.
+
+---
+
+## Uninstalling
+
+1. Windows Settings → **Apps** → **Installed apps** → search **Etsy Draft Listing**
+2. Click the `…` menu → **Uninstall**
+
+This removes the program files and shortcuts. It does **not** delete `%APPDATA%\Etsy Draft Listing Assistant\` (config, tokens, folder memory). If you want a fully clean removal, manually delete that folder afterward.
+
+---
+
+## Development workflow
+
+Run the web app without Electron (just the Express server in your browser):
+
+```powershell
 npm start
 ```
+Then open http://localhost:3000.
 
-5. Open:
-- `http://localhost:3000`
+Run inside Electron locally without building an installer:
 
-## Etsy OAuth note (important)
+```powershell
+npm run electron
+```
 
-Etsy requires the redirect URI to be **HTTPS** and to match exactly what you configured in your Etsy app settings.
+Build only the portable `.exe` (no installer):
 
-For local use, common options are:
-- A reverse proxy with HTTPS on your machine/network
-- An HTTPS tunnel (e.g., Cloudflare Tunnel / ngrok) mapped to `http://localhost:3000`
+```powershell
+npm run build:portable
+```
 
-Then set `ETSY_REDIRECT_URI=https://your-domain/auth/etsy/callback` in `.env` and Etsy app settings.
+### Adding an app icon
 
-## Etsy defaults you must configure in the app UI
+The build works fine without a custom icon — electron-builder falls back to the default Electron icon. To brand the installer, taskbar entry, and window:
 
-Before creating drafts, set these under **Settings**:
-- `shopId`
-- `taxonomy_id`
-- `shipping_profile_id`
-- `readiness_state_id`
-- `who_made`
-- `when_made`
+1. Create a `build/` folder at the project root.
+2. Place a Windows `.ico` at `build/icon.ico`. Recommended: a multi-resolution `.ico` containing 16x16, 24x24, 32x32, 48x48, 64x64, 128x128, 256x256.
+3. Re-run `npm run build:win`.
 
-These are required for physical listings.
+**Quick way to make one from a PNG:**
+- https://cloudconvert.com/png-to-ico (drop in a 512x512+ PNG, export as multi-resolution `.ico`)
+- ImageMagick: `magick convert source.png -define icon:auto-resize=256,128,64,48,32,16 build/icon.ico`
 
-## Workflow
+electron-builder auto-detects `build/icon.ico` — no `package.json` changes needed.
 
-1. Set sync folder and Etsy defaults in **Settings**
-2. Click **Refresh Photos**
-3. Select listing photos and order them
-4. Fill out intake form
-5. Click **Generate Listing (AI)**
-6. Review/edit generated title and description
-7. Click **Create Etsy Draft (Unpublished)**
-8. Review final draft in Etsy before publishing
+---
 
-## Notes / limitations (MVP)
+## Architecture notes
 
-- Etsy fields can vary by category/taxonomy. If Etsy rejects the listing request, the app logs the API error for adjustment.
-- Tags/materials handling is implemented in a pragmatic way and may need refinement depending on your category rules.
-- Vision (sending images to OpenAI) is optional and capped in this MVP to avoid huge requests.
-- HEIC/HEIF image analysis via OpenAI may be less reliable than JPG/PNG depending on your workflow. If needed, convert photos to JPG in your phone/cloud export settings.
-- No direct Etsy publish action is included on purpose; this app creates **drafts only** for your final review.
+- **Frontend**: vanilla HTML/CSS/JS in `public/` — no framework
+- **Backend**: Node.js + Express in `server.js`
+- **AI**: Anthropic Claude (`/v1/messages`) via tool-use for structured JSON output, with vision for photo analysis
+- **Etsy**: Open API v3 with OAuth2 + PKCE, taxonomy auto-match, shipping/readiness lookup
+- **Desktop wrapper**: Electron main process boots the Express server in the same Node runtime, then opens a `BrowserWindow` pointed at `http://localhost:3000`. OAuth is delegated to the user's default browser via `shell.openExternal`.
 
-## Suggested next upgrades
+---
 
-- Auto-resize/convert images (HEIC → JPG) before AI / Etsy upload
-- Saved item templates (mugs, stemware, tumblers)
-- Draft queue and batch mode
-- Barcode/label printing and SKU generation
-- Local database (SQLite) + search
-- Direct integration with your own website platform as a second destination
+## Limitations / known behaviors
 
-## Security notes
+- **Vision capped at 10 photos** per listing (Claude API limit). The Step 2 banner warns if you select more.
+- **Drafts only** — by design. Final publish always happens in the Etsy seller dashboard.
+- **Partial-upload failure**: if image upload fails partway through draft creation, the draft will still exist on Etsy with whatever images uploaded successfully. Check the Etsy dashboard.
+- **HEIC/HEIF** photos are accepted but JPG/PNG/WebP give the most reliable AI analysis.
+- **No code signing**: unsigned `.exe` will show "unknown publisher" on first launch. Click "More info → Run anyway" or invest in a code-signing certificate (~$200/yr).
 
-- This is a local app and stores Etsy tokens in `data/etsy_tokens.json` on your machine.
-- Keep your `.env` file private.
-- Do not expose this app publicly without adding authentication and stronger secret storage.
+---
+
+## Security
+
+- Tokens and keys live only on the user's machine, in `%APPDATA%\Etsy Draft Listing Assistant\`.
+- Don't share the contents of that folder. The activity log copy button strips sensitive data, but `data/etsy_tokens.json` and `.env` should be treated as secrets.
+- This app is designed for single-user local use. Don't expose it on a network without adding authentication.

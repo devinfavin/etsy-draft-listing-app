@@ -3,3 +3,5 @@ data/*.json
 .env
 .DS_Store
 Thumbs.db
+data/thumb-cache/
+dist-electron/

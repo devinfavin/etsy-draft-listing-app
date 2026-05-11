@@ -1,19 +1,73 @@
 {
   "name": "etsy-draft-listing-app",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "private": true,
-  "description": "Local desktop-style web app to generate Etsy draft listings from synced photos + intake form using OpenAI",
-  "main": "server.js",
+  "description": "Local desktop-style web app to generate Etsy draft listings from synced photos + intake form using Anthropic Claude",
+  "main": "electron/main.js",
   "type": "commonjs",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "electron": "electron .",
+    "build:win": "electron-builder --win",
+    "build:portable": "electron-builder --win portable"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "sharp": "^0.34.4"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.devinfavin.etsy-draft-listing",
+    "productName": "Etsy Draft Listing Assistant",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "electron/**/*",
+      "server.js",
+      "public/**/*",
+      ".env.template",
+      "package.json",
+      "node_modules/**/*",
+      "!**/{.git,.github,.vscode,test,tests,__tests__,docs,examples}/**",
+      "!**/*.md",
+      "!**/*.map"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Etsy Draft Listing"
+    },
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/sharp/**",
+      "node_modules/@img/**"
+    ]
   }
 }

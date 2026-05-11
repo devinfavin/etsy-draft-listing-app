@@ -12,13 +12,39 @@
       <h1>Etsy Draft Listing Assistant</h1>
       <p>Follow each step in order to create an Etsy draft listing.</p>
     </div>
-    <div class="status-badges">
-      <span id="healthBadge" class="badge">Server: ...</span>
-      <span id="etsyBadge" class="badge">Etsy: ...</span>
+    <div class="topbar-right">
+      <div class="connection-pill-wrap">
+        <button id="connectionPill" class="connection-pill" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="Etsy connection status">
+          <span id="connectionDot" class="connection-dot" aria-hidden="true"></span>
+          <span id="connectionText">Checking…</span>
+        </button>
+        <div id="connectionMenu" class="connection-menu hidden" role="menu">
+          <button id="refreshShopInfoBtn" class="connection-menu-item" type="button" role="menuitem">Refresh shop info</button>
+          <button id="disconnectStoreBtn" class="connection-menu-item" type="button" role="menuitem">Disconnect</button>
+        </div>
+      </div>
+      <div class="store-switch">
+        <label for="activeStoreSelect">Store</label>
+        <select id="activeStoreSelect" aria-label="Active Etsy store"></select>
+      </div>
+      <button
+        id="themeToggleBtn"
+        class="theme-toggle"
+        type="button"
+        aria-label="Current theme: Light. Click to switch to Dark."
+        title="Light mode"
+      >
+        <span id="themeToggleIcon" aria-hidden="true">&#9728;</span>
+      </button>
     </div>
   </header>
 
   <main class="layout">
+    <div id="setupBanner" class="setup-banner hidden" role="alert">
+      <strong>Setup needed:</strong>
+      <span id="setupBannerMessage"></span>
+      <span id="setupBannerPathLabel" class="setup-banner-path"></span>
+    </div>
     <section class="wizard-progress panel">
       <div class="progress-label">Step <span id="progressCurrent">1</span> of <span id="progressTotal">5</span></div>
       <div id="progressBar" class="progress-bar" role="progressbar" aria-valuemin="1" aria-valuemax="5" aria-valuenow="1">
@@ -28,62 +54,27 @@
     </section>
 
     <section id="step1" class="panel step-panel">
-      <h2>Step 1: One-time setup</h2>
-      <p class="help">Set these once, then you can reuse them for future listings.</p>
+      <h2>Step 1: Setup</h2>
+      <p class="help">These settings save automatically as you change them.</p>
+      <p id="activeStoreSummary" class="help"></p>
       <div class="grid one">
-        <label>Photo folder path
+        <label><span class="field-label">Photo folder</span>
           <div class="field-with-button">
             <input id="syncFolder" type="text" placeholder="C:\\Users\\you\\OneDrive\\Mugs" />
             <button id="browseSyncFolderBtn" type="button" class="secondary">Browse</button>
           </div>
+          <p id="syncFolderError" class="field-error hidden"></p>
         </label>
       </div>
-      <p id="shopSummary" class="help">Store: not set yet (configure in advanced settings below)</p>
 
-      <details class="advanced">
-        <summary>Advanced Etsy defaults (required for draft API)</summary>
-        <div class="grid three pad-top">
-          <label>Etsy shop ID (set once)
-            <input id="etsyShopId" type="text" placeholder="12345678" />
-          </label>
-          <label>who_made
-            <select id="dWhoMade">
-              <option value="someone_else">someone_else</option>
-              <option value="i_did">i_did</option>
-              <option value="collective">collective</option>
-            </select>
-          </label>
-          <label>when_made
-            <input id="dWhenMade" type="text" placeholder="before_2000" />
-          </label>
-          <label>taxonomy_id
-            <input id="dTaxonomyId" type="text" placeholder="Category taxonomy ID" />
-          </label>
-          <label>shipping_profile_id
-            <input id="dShippingProfileId" type="text" placeholder="Shipping profile ID" />
-          </label>
-          <label>readiness_state_id
-            <input id="dReadinessStateId" type="text" placeholder="Readiness state ID" />
-          </label>
-          <label>Default quantity
-            <input id="dQuantity" type="number" min="1" value="1" />
-          </label>
-          <label>OpenAI model (optional)
-            <input id="openaiModel" type="text" placeholder="gpt-4.1-mini" />
-          </label>
-        </div>
-      </details>
-
-      <label class="block">Listing policy text appended to the AI description
+      <label class="block"><span class="field-label">Listing policy</span>
+        <p class="help">Added to the bottom of every AI-generated description.</p>
         <textarea id="listingPolicyText" rows="3"></textarea>
       </label>
 
-      <div class="row gap wrap">
-        <button id="saveConfigBtn">Save Setup</button>
-        <button id="connectEtsyBtn" class="secondary">Connect Etsy</button>
+      <div class="row gap wrap nav-row">
         <button id="toStep2Btn">Continue to Photos</button>
       </div>
-      <p class="help">Tip: Etsy OAuth callback must be HTTPS and match Etsy app settings exactly.</p>
     </section>
 
     <section id="step2" class="panel step-panel hidden">
@@ -103,12 +94,20 @@
         <div id="folderBreadcrumbs" class="breadcrumbs"></div>
         <div class="explorer-content">
           <div id="photoGrid" class="browser-grid"></div>
+          <div id="loadMoreRow" class="load-more-row hidden">
+            <button id="loadMorePhotosBtn" class="secondary" type="button">Load more photos</button>
+            <span id="loadMoreCount" class="muted-text"></span>
+          </div>
         </div>
       </div>
 
       <h3>Selected photos (drag left to right to reorder)</h3>
+      <div id="photoLimitWarning" class="warning-callout hidden">
+        More than 10 photos selected — Claude can only analyze up to 10. Remove some before generating.
+      </div>
+      <p id="step2SelectionError" class="field-error hidden"></p>
       <div id="selectedStrip" class="selected-strip"></div>
-      <div class="help">The left-most photo becomes your first listing image.</div>
+      <div class="help">The photo marked <strong>COVER</strong> becomes your first listing image. Drag to reorder.</div>
 
       <div class="row gap wrap">
         <button id="clearSelectionBtn" class="secondary" type="button">Clear Selection</button>
@@ -122,78 +121,69 @@
 
     <section id="step3" class="panel step-panel hidden">
       <h2>Step 3: Item details</h2>
-      <p class="help">Only a few details are required. Keep it simple.</p>
-      <p class="help">Fields marked with <span class="required-star">*</span> are required.</p>
+      <p class="help">Fields marked with <span class="required-star">*</span> are required. The AI reads your photos for everything else.</p>
       <div class="grid two">
-        <label><span class="field-label">Item type<span class="required-star">*</span></span>
-          <input id="f_type" type="text" placeholder="Coffee mug" required />
-        </label>
-        <label><span class="field-label">Brand</span>
-          <input id="f_brand" type="text" placeholder="Optional" />
+        <label><span class="field-label">What is this item?<span class="required-star">*</span></span>
+          <input id="f_type" type="text" placeholder="Vintage ceramic coffee mug" required />
+          <p id="f_typeError" class="field-error hidden"></p>
         </label>
         <label><span class="field-label">Price<span class="required-star">*</span></span>
           <input id="f_price" type="text" placeholder="18.99" required />
-        </label>
-        <label><span class="field-label">Quantity</span>
-          <input id="f_quantity" type="number" min="1" value="1" />
+          <p id="f_priceError" class="field-error hidden"></p>
         </label>
       </div>
-      <label class="block"><span class="field-label">Condition summary</span>
-        <input id="f_conditionSummary" type="text" placeholder="Used, very good, no chips" />
-      </label>
-      <label class="block"><span class="field-label">Defects or wear (optional)</span>
-        <textarea id="f_defects" rows="2" placeholder="Small scratch on handle"></textarea>
-      </label>
-      <label class="block"><span class="field-label">Notes for AI (optional)</span>
-        <textarea id="f_notes" rows="3" placeholder="Any important details to include"></textarea>
+      <div class="grid two">
+        <label class="block"><span class="field-label">Quantity<span class="required-star">*</span></span>
+          <input id="f_quantity" type="number" min="1" value="1" />
+          <p id="f_quantityError" class="field-error hidden"></p>
+        </label>
+        <label class="block"><span class="field-label">Era / when made<span class="required-star">*</span></span>
+          <select id="f_whenMade">
+            <option value="">Select era…</option>
+            <option value="before_2007">Before 2007 (vintage)</option>
+            <option value="2000_2006">2000–2006</option>
+            <option value="1990s">1990s</option>
+            <option value="1980s">1980s</option>
+            <option value="1970s">1970s</option>
+            <option value="1960s">1960s</option>
+            <option value="1950s">1950s</option>
+            <option value="1940s">1940s</option>
+            <option value="1930s">1930s</option>
+            <option value="1920s">1920s</option>
+            <option value="1900s">1900s</option>
+            <option value="1800s">1800s</option>
+          </select>
+          <p id="f_whenMadeError" class="field-error hidden"></p>
+        </label>
+      </div>
+      <div class="grid two">
+        <label class="block"><span class="field-label">Readiness state<span class="required-star">*</span></span>
+          <select id="f_readinessStateId">
+            <option value="">Select a readiness state…</option>
+          </select>
+          <p id="f_readinessStateIdError" class="field-error hidden"></p>
+        </label>
+        <label class="block"><span class="field-label">Shipping profile<span class="required-star">*</span></span>
+          <select id="f_shippingProfileId">
+            <option value="">Select a shipping profile…</option>
+          </select>
+          <p id="f_shippingProfileIdError" class="field-error hidden"></p>
+        </label>
+      </div>
+      <label class="block"><span class="field-label">Anything the photos don't show?</span>
+        <p class="help">Flaws, history, hidden marks, smells, anything else worth telling buyers.</p>
+        <p class="help">Leave blank if the photos cover everything.</p>
+        <textarea id="f_notes" rows="3" placeholder="e.g. Small chip inside rim, signed on bottom &quot;M.K. 1962&quot;"></textarea>
       </label>
 
-      <details class="advanced">
-        <summary>More optional details</summary>
-        <div class="grid three pad-top">
-          <label>Title hint
-            <input id="f_titleHint" type="text" />
-          </label>
-          <label>Capacity
-            <input id="f_capacity" type="text" placeholder="12 oz" />
-          </label>
-          <label>Material
-            <input id="f_material" type="text" placeholder="Ceramic" />
-          </label>
-          <label>Dimensions
-            <input id="f_dimensions" type="text" placeholder="H x W" />
-          </label>
-          <label>Weight
-            <input id="f_weight" type="text" />
-          </label>
-          <label>Pattern/style/color
-            <input id="f_patternStyleColor" type="text" />
-          </label>
-          <label>Microwave safe
-            <select id="f_microwaveSafe">
-              <option value="Unknown">Unknown</option>
-              <option value="Yes">Yes</option>
-              <option value="No">No</option>
-            </select>
-          </label>
-          <label>Dishwasher safe
-            <select id="f_dishwasherSafe">
-              <option value="Unknown">Unknown</option>
-              <option value="Yes">Yes</option>
-              <option value="No">No</option>
-            </select>
-          </label>
-          <label>Era/age
-            <input id="f_era" type="text" placeholder="1990s" />
-          </label>
-          <label>Markings/stamp
-            <input id="f_markings" type="text" />
-          </label>
-        </div>
-      </details>
+      <p class="notice-callout"><strong>Heads up:</strong> Your selected photos are sent to Claude when you click Generate Listing.</p>
 
+      <div id="existingListingNotice" class="existing-listing-notice hidden">
+        A listing was already generated this session.
+      </div>
       <div class="row gap wrap nav-row">
         <button id="backToStep2Btn" class="secondary">Back</button>
+        <button id="useExistingBtn" class="secondary hidden" type="button">Keep existing &#8594;</button>
         <button id="generateBtn">Generate Listing</button>
       </div>
     </section>
@@ -209,6 +199,16 @@
       <label class="block">Tags (comma separated)
         <textarea id="o_tags" rows="2"></textarea>
       </label>
+      <div id="taxonomyMatchRow" class="hidden">
+        <label class="block">AI-matched Etsy category
+          <div class="field-with-button">
+            <input id="o_taxonomy_label" type="text" readonly placeholder="Not matched yet" />
+            <button id="clearTaxonomyBtn" type="button" class="secondary">Clear</button>
+          </div>
+        </label>
+        <p class="help">This category was auto-detected. Clear it to re-match on next generate, or update taxonomy_id in Settings.</p>
+      </div>
+
       <details class="advanced">
         <summary>More generated fields</summary>
         <div class="pad-top">
@@ -245,19 +245,80 @@
       <h2>Step 5: Create Etsy draft</h2>
       <p class="help">This creates an unpublished draft in Etsy and uploads your selected photos.</p>
       <div class="summary-box">
+        <div><strong>Title:</strong> <span id="summaryTitle">-</span></div>
+        <div><strong>Store:</strong> <span id="summaryStore">-</span></div>
         <div><strong>Photos selected:</strong> <span id="summaryPhotoCount">0</span></div>
         <div><strong>Price:</strong> <span id="summaryPrice">-</span></div>
+        <div><strong>Era:</strong> <span id="summaryEra">-</span></div>
+        <div><strong>Shipping profile:</strong> <span id="summaryShipping">-</span></div>
+        <div><strong>Readiness:</strong> <span id="summaryReadiness">-</span></div>
+        <div><strong>Category:</strong> <span id="summaryCategory">-</span></div>
       </div>
+      <div id="step5MissingFields" class="hidden">
+        <div class="missing-fields-callout">
+          <strong>Required Etsy settings are missing.</strong> Fill them in below — they'll be saved to your store settings when the draft is created.
+        </div>
+        <div class="grid two pad-top">
+          <label id="s5WhenMadeWrap" class="hidden"><span class="field-label">when_made <span class="required-star">*</span></span>
+            <select id="s5WhenMade">
+              <option value="">Select...</option>
+              <option value="made_to_order">Made to order</option>
+              <option value="2020_2026">2020–2026</option>
+              <option value="2010_2019">2010–2019</option>
+              <option value="2007_2009">2007–2009</option>
+              <option value="2000_2006">2000–2006</option>
+              <option value="before_2007">Before 2007</option>
+              <option value="1990s">1990s</option>
+              <option value="1980s">1980s</option>
+              <option value="1970s">1970s</option>
+              <option value="1960s">1960s</option>
+              <option value="1950s">1950s</option>
+              <option value="1940s">1940s</option>
+              <option value="1930s">1930s</option>
+              <option value="1920s">1920s</option>
+              <option value="1910s">1910s</option>
+              <option value="1900s">1900s</option>
+              <option value="1800s">1800s</option>
+              <option value="1700s">1700s</option>
+              <option value="before_1700">Before 1700</option>
+            </select>
+          </label>
+          <label id="s5TaxonomyWrap" class="hidden"><span class="field-label">taxonomy_id <span class="required-star">*</span></span>
+            <input id="s5TaxonomyId" type="text" placeholder="e.g. 1" />
+          </label>
+          <label id="s5ShippingWrap" class="hidden"><span class="field-label">Shipping profile <span class="required-star">*</span></span>
+            <select id="s5ShippingProfileId">
+              <option value="">Loading profiles...</option>
+            </select>
+          </label>
+          <label id="s5ReadinessWrap" class="hidden"><span class="field-label">Readiness state <span class="required-star">*</span></span>
+            <select id="s5ReadinessStateId">
+              <option value="">Loading...</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
       <div class="row gap wrap nav-row">
         <button id="backToStep4Btn" class="secondary">Back</button>
         <button id="createEtsyDraftBtn">Create Etsy Draft (Unpublished)</button>
       </div>
       <div id="etsyResult" class="result-box"></div>
+      <div id="postDraftRow" class="row gap wrap nav-row hidden">
+        <button id="startNewListingBtn">New Listing</button>
+      </div>
     </section>
 
-    <section class="panel">
-      <h2>Activity Log</h2>
-      <pre id="log"></pre>
+    <section class="panel log-panel">
+      <details id="logDetails">
+        <summary class="log-summary">Activity log</summary>
+        <p class="help">If you run into trouble, copy this log and send it to your administrator.</p>
+        <div class="row gap wrap log-actions">
+          <button id="copyLogBtn" type="button">Copy log to send to support</button>
+          <button id="saveLogBtn" class="secondary" type="button">Save to file</button>
+        </div>
+        <pre id="log"></pre>
+      </details>
     </section>
   </main>
 
