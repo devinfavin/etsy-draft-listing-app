@@ -1502,12 +1502,32 @@ app.get('/api/etsy/taxonomy-search', async (req, res) => {
     if (!q) return errorResponse(res, 400, 'q parameter is required');
 
     const all = await fetchFlatTaxonomyNodes(store.key);
-    const matches = all.filter((n) => n.name.toLowerCase().includes(q)).slice(0, 20);
+    const matches = all
+      .filter((n) => n.name.toLowerCase().includes(q))
+      .sort((a, b) => {
+        // Leaf nodes (most specific) first — Etsy typically wants leaf taxonomy IDs.
+        if (a.isLeaf !== b.isLeaf) return a.isLeaf ? -1 : 1;
+        const aExact = a.name.toLowerCase() === q;
+        const bExact = b.name.toLowerCase() === q;
+        if (aExact !== bExact) return aExact ? -1 : 1;
+        const aStarts = a.name.toLowerCase().startsWith(q);
+        const bStarts = b.name.toLowerCase().startsWith(q);
+        if (aStarts !== bStarts) return aStarts ? -1 : 1;
+        return a.name.length - b.name.length;
+      })
+      .slice(0, 20);
     res.json({ ok: true, matches });
   } catch (err) {
     errorResponse(res, err.status || 500, err.message, err.details || null);
   }
 });
+
+function prefetchTaxonomyInBackground(storeKey) {
+  if (!storeKey) return;
+  fetchFlatTaxonomyNodes(storeKey).catch((err) => {
+    console.warn(`Taxonomy prefetch failed for ${storeKey}:`, err.message);
+  });
+}
 
 app.get('/api/etsy/readiness-states', async (req, res) => {
   try {
@@ -1555,6 +1575,7 @@ app.post('/api/etsy/refresh-shop-info', async (req, res) => {
     }
 
     applyShopInfoToStore(store.key, shopInfo);
+    prefetchTaxonomyInBackground(store.key);
     res.json({ ok: true, shopInfo, config: sanitizeForClientConfig(getConfig()) });
   } catch (err) {
     errorResponse(res, err.status || 500, err.message, err.details || null);
@@ -1751,6 +1772,8 @@ app.get('/auth/etsy/callback', async (req, res) => {
     } catch (shopErr) {
       console.warn('Could not auto-populate shop info:', shopErr.message);
     }
+    // Warm the taxonomy cache in the background so the user's first category search is instant.
+    prefetchTaxonomyInBackground(store.key);
 
     const finalStore = getStoreByKeyFromConfig(getConfig(), store.key);
     const displayName = finalStore.label || store.label || store.key;

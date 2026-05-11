@@ -136,9 +136,39 @@ What's **not** included: API keys, OAuth access/refresh tokens, photo contents.
 
 ## Updating to a new version
 
-1. Build the new installer on the development machine: `npm run build:win`
-2. Copy the new `Etsy Draft Listing Assistant Setup <version>.exe` to the user's PC
-3. Run it — Windows / NSIS detects the prior install and replaces files in place
+### Auto-update (preferred, after v0.2.2+)
+
+Starting with v0.2.2, the installed app checks `https://github.com/devinfavin/etsy-draft-listing-app/releases/latest` on startup. If a newer version is found, it downloads in the background and prompts the user with a native dialog: *"Etsy Draft Listing Assistant X.Y.Z is ready to install. Install and restart, or later?"* — one click installs and relaunches. `%APPDATA%` is preserved through every update.
+
+The user can also manually trigger a check via **File menu → Check for updates**.
+
+**Publishing a new version** (administrator):
+
+1. Set your GitHub token as an environment variable (one-time setup per machine):
+   ```powershell
+   $env:GH_TOKEN = "ghp_yourtokenhere"
+   ```
+   The token needs `repo` scope (classic PAT) or "Contents: read/write" (fine-grained PAT scoped to this single repo). Generate at https://github.com/settings/tokens.
+
+2. Bump the version, build, and publish in one go:
+   ```powershell
+   npm version patch       # 0.2.2 → 0.2.3 (or use 'minor' / 'major')
+   npm run publish:win     # builds the installer AND uploads to GitHub Releases
+   ```
+   This creates a new GitHub release with the `.exe` and a `latest.yml` manifest that `electron-updater` reads.
+
+3. Commit and push the version bump:
+   ```powershell
+   git push origin main --follow-tags
+   ```
+
+That's it. Within a minute or so, every installed copy of the app will see the new release and offer to update.
+
+### Manual update (fallback for pre-v0.2.2 installs or air-gapped machines)
+
+1. Build the new installer: `npm run build:win`
+2. Copy `dist-electron\Etsy Draft Listing Assistant Setup <version>.exe` to the user's PC
+3. Run it — NSIS detects the prior install and replaces files in place
 
 **What's preserved across updates:** the user's `.env`, store config, OAuth tokens, last-used folder, photo thumbnail cache — everything in `%APPDATA%\Etsy Draft Listing Assistant\`.
 

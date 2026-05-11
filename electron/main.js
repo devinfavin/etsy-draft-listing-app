@@ -2,6 +2,7 @@ const { app, BrowserWindow, shell, dialog, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const dotenv = require('dotenv');
+const { autoUpdater } = require('electron-updater');
 
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const userDataDir = app.getPath('userData');
@@ -114,7 +115,60 @@ app.whenReady().then(async () => {
   }
   const win = createWindow();
   await loadAppIntoWindow(win);
+  // Kick off the update check after the window is ready so the user has a UI even if
+  // the update server is slow. Errors are swallowed deliberately — we don't want a
+  // missed update check to interrupt normal use.
+  setTimeout(() => {
+    checkForUpdates().catch((err) => {
+      console.warn('[updater] background check failed:', err && err.message);
+    });
+  }, 4000);
 });
+
+let updateCheckInFlight = false;
+
+async function checkForUpdates() {
+  if (updateCheckInFlight) return;
+  if (!app.isPackaged) {
+    console.log('[updater] skipped: not running from a packaged build');
+    return;
+  }
+  updateCheckInFlight = true;
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.on('error', (err) => {
+    console.warn('[updater] error:', err && err.message);
+  });
+  autoUpdater.on('update-available', (info) => {
+    console.log(`[updater] update available: ${info.version}`);
+  });
+  autoUpdater.on('update-not-available', () => {
+    console.log('[updater] no updates available');
+  });
+  autoUpdater.on('download-progress', (p) => {
+    console.log(`[updater] downloading: ${Math.round(p.percent)}%`);
+  });
+  autoUpdater.on('update-downloaded', async (info) => {
+    const choice = await dialog.showMessageBox({
+      type: 'info',
+      buttons: ['Install and restart', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+      title: 'Update ready',
+      message: `Etsy Draft Listing Assistant ${info.version} is ready to install.`,
+      detail: 'The app will close briefly, install the update, then reopen.'
+    });
+    if (choice.response === 0) {
+      // isSilent=true skips the NSIS UI; isForceRunAfter=true re-launches the app.
+      autoUpdater.quitAndInstall(true, true);
+    }
+  });
+  try {
+    await autoUpdater.checkForUpdates();
+  } finally {
+    updateCheckInFlight = false;
+  }
+}
 
 app.on('window-all-closed', () => {
   app.quit();
@@ -136,6 +190,17 @@ function buildAppMenu() {
         {
           label: 'Open config folder',
           click: () => shell.openPath(userDataDir)
+        },
+        {
+          label: 'Check for updates',
+          click: async () => {
+            try {
+              await checkForUpdates();
+              if (!autoUpdater.currentVersion) return;
+            } catch (err) {
+              dialog.showErrorBox('Update check failed', err && err.message ? err.message : String(err));
+            }
+          }
         },
         { type: 'separator' },
         isMac ? { role: 'close' } : { role: 'quit' }

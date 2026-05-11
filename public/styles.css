@@ -1039,6 +1039,97 @@ button:focus-visible,
 
 .selected-thumb .remove-btn:hover { transform: none; box-shadow: none; }
 
+/* ─── Taxonomy search (Step 4) ───────────────────────────── */
+.taxonomy-display {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 12px 16px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--input-bg);
+  min-height: var(--input-h);
+}
+
+.taxonomy-display-label {
+  flex: 1 1 auto;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.taxonomy-display-label.muted-text {
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.taxonomy-display button {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 8px 18px;
+}
+
+.taxonomy-search {
+  margin-top: 0;
+  display: grid;
+  gap: var(--space-2);
+}
+
+.taxonomy-results {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  padding: 4px;
+}
+
+.taxonomy-result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: transparent;
+  color: var(--text);
+  border: none;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 2px 0;
+  min-height: 44px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: none;
+  transition: background-color 120ms ease;
+}
+
+.taxonomy-result:hover {
+  background: var(--accent-soft);
+  transform: none;
+  box-shadow: none;
+}
+
+.taxonomy-result-name {
+  flex: 1 1 auto;
+}
+
+.taxonomy-result-id {
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-weight: 500;
+  margin-left: var(--space-3);
+}
+
+.taxonomy-result-empty {
+  padding: 12px 14px;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
 /* ─── Summary / result boxes ─────────────────────────────── */
 .summary-box {
   border: 1.5px solid var(--border);

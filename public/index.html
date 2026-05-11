@@ -199,14 +199,20 @@
       <label class="block">Tags (comma separated)
         <textarea id="o_tags" rows="2"></textarea>
       </label>
-      <div id="taxonomyMatchRow" class="hidden">
-        <label class="block">AI-matched Etsy category
-          <div class="field-with-button">
-            <input id="o_taxonomy_label" type="text" readonly placeholder="Not matched yet" />
-            <button id="clearTaxonomyBtn" type="button" class="secondary">Clear</button>
+      <div id="taxonomyRow" class="block">
+        <label class="taxonomy-label"><span class="field-label">Etsy category</span></label>
+        <div id="taxonomyDisplay" class="taxonomy-display">
+          <span id="taxonomyDisplayLabel" class="taxonomy-display-label">No category selected yet</span>
+          <button id="taxonomyChangeBtn" type="button" class="secondary">Change</button>
+        </div>
+        <div id="taxonomySearch" class="taxonomy-search hidden">
+          <input id="taxonomySearchInput" type="text" placeholder="Search Etsy categories (e.g. mug, planter, brooch)" autocomplete="off" />
+          <div id="taxonomyResults" class="taxonomy-results hidden"></div>
+          <div class="row gap pad-top">
+            <button id="taxonomyCancelBtn" type="button" class="secondary">Cancel</button>
           </div>
-        </label>
-        <p class="help">This category was auto-detected. Clear it to re-match on next generate, or update taxonomy_id in Settings.</p>
+        </div>
+        <p class="help">The AI auto-matches a category when you generate. You can override it here.</p>
       </div>
 
       <details class="advanced">

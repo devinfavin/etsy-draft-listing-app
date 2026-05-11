@@ -1,6 +1,6 @@
 {
   "name": "etsy-draft-listing-app",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Local desktop-style web app to generate Etsy draft listings from synced photos + intake form using Anthropic Claude",
   "main": "electron/main.js",
@@ -10,13 +10,15 @@
     "dev": "node --watch server.js",
     "electron": "electron .",
     "build:win": "electron-builder --win",
-    "build:portable": "electron-builder --win portable"
+    "build:portable": "electron-builder --win portable",
+    "publish:win": "electron-builder --win --publish always"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
+    "electron-updater": "^6.8.3",
     "express": "^4.21.2",
     "sharp": "^0.34.4"
   },
@@ -68,6 +70,13 @@
     "asarUnpack": [
       "node_modules/sharp/**",
       "node_modules/@img/**"
-    ]
+    ],
+    "publish": {
+      "provider": "github",
+      "owner": "devinfavin",
+      "repo": "etsy-draft-listing-app",
+      "private": false,
+      "releaseType": "release"
+    }
   }
 }

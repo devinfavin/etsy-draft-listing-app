@@ -405,6 +405,10 @@ function setStep(step) {
   updateStoreSwitcherLock();
   updateStep5Summary();
   if (state.step === 3) updateStep3ForExisting();
+  if (state.step === 4) {
+    updateTaxonomyDisplay();
+    showTaxonomyDisplay();
+  }
   if (state.step === 5) renderStep5MissingFields();
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -530,8 +534,8 @@ function resetForNewListing() {
   $('o_materials').value = '';
   $('o_colors').value = '';
   $('o_alt_text').value = '';
-  $('taxonomyMatchRow').classList.add('hidden');
-  $('o_taxonomy_label').value = '';
+  updateTaxonomyDisplay();
+  showTaxonomyDisplay();
 }
 
 function updateStep5Summary() {
@@ -578,6 +582,96 @@ function humanizeEnum(value) {
   return String(value || '')
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function updateTaxonomyDisplay() {
+  const label = $('taxonomyDisplayLabel');
+  if (!label) return;
+  if (state.autoTaxonomyId && state.autoTaxonomyLabel) {
+    label.textContent = `${state.autoTaxonomyLabel} (#${state.autoTaxonomyId})`;
+    label.classList.remove('muted-text');
+  } else if (state.autoTaxonomyId) {
+    label.textContent = `Category #${state.autoTaxonomyId}`;
+    label.classList.remove('muted-text');
+  } else {
+    label.textContent = 'No category selected yet';
+    label.classList.add('muted-text');
+  }
+}
+
+function showTaxonomyDisplay() {
+  $('taxonomyDisplay').classList.remove('hidden');
+  $('taxonomySearch').classList.add('hidden');
+  $('taxonomyResults').classList.add('hidden');
+}
+
+function showTaxonomySearch() {
+  $('taxonomyDisplay').classList.add('hidden');
+  $('taxonomySearch').classList.remove('hidden');
+  const input = $('taxonomySearchInput');
+  if (input) {
+    input.value = '';
+    setTimeout(() => input.focus(), 50);
+  }
+  $('taxonomyResults').innerHTML = '';
+  $('taxonomyResults').classList.add('hidden');
+}
+
+let taxonomySearchTimer = null;
+let taxonomySearchRequestId = 0;
+
+function onTaxonomySearchInput() {
+  if (taxonomySearchTimer) clearTimeout(taxonomySearchTimer);
+  const q = $('taxonomySearchInput').value.trim();
+  taxonomySearchTimer = setTimeout(() => runTaxonomySearch(q), 220);
+}
+
+async function runTaxonomySearch(query) {
+  const resultsEl = $('taxonomyResults');
+  if (!query || query.length < 2) {
+    resultsEl.innerHTML = '';
+    resultsEl.classList.add('hidden');
+    return;
+  }
+  const myRequestId = ++taxonomySearchRequestId;
+  try {
+    const res = await api(`/api/etsy/taxonomy-search?q=${encodeURIComponent(query)}`);
+    if (myRequestId !== taxonomySearchRequestId) return;
+    renderTaxonomyResults(res.matches || []);
+  } catch (err) {
+    if (myRequestId !== taxonomySearchRequestId) return;
+    resultsEl.innerHTML = `<div class="taxonomy-result-empty">${escapeHtml(err.message)}</div>`;
+    resultsEl.classList.remove('hidden');
+  }
+}
+
+function renderTaxonomyResults(matches) {
+  const resultsEl = $('taxonomyResults');
+  resultsEl.innerHTML = '';
+  if (!matches.length) {
+    resultsEl.innerHTML = '<div class="taxonomy-result-empty">No matching categories. Try a different keyword.</div>';
+    resultsEl.classList.remove('hidden');
+    return;
+  }
+  for (const m of matches) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'taxonomy-result';
+    btn.innerHTML = `<span class="taxonomy-result-name">${escapeHtml(m.name)}</span><span class="taxonomy-result-id">#${escapeHtml(String(m.id))}</span>`;
+    btn.addEventListener('click', () => selectTaxonomy(m));
+    resultsEl.appendChild(btn);
+  }
+  resultsEl.classList.remove('hidden');
+}
+
+function selectTaxonomy(match) {
+  state.autoTaxonomyId = String(match.id);
+  state.autoTaxonomyLabel = match.name;
+  updateTaxonomyDisplay();
+  showTaxonomyDisplay();
+  $('taxonomySearchInput').value = '';
+  log(`Etsy category set to "${match.name}" (#${match.id})`);
+  updateStep5Summary();
 }
 
 function showFieldError(errorId, message) {
@@ -1113,13 +1207,12 @@ async function generateListing() {
     if (res.autoTaxonomyId) {
       state.autoTaxonomyId = String(res.autoTaxonomyId);
       state.autoTaxonomyLabel = res.autoTaxonomyLabel || '';
-      $('o_taxonomy_label').value = state.autoTaxonomyLabel || state.autoTaxonomyId;
-      $('taxonomyMatchRow').classList.remove('hidden');
       log(`AI matched Etsy category: "${state.autoTaxonomyLabel}" (#${state.autoTaxonomyId})`);
     } else {
       state.autoTaxonomyId = null;
       state.autoTaxonomyLabel = null;
     }
+    updateTaxonomyDisplay();
 
     setStep(4);
   } catch (err) {
@@ -1502,11 +1595,23 @@ function attachEvents() {
 
   $('browseSyncFolderBtn').addEventListener('click', browseSyncFolder);
   $('startNewListingBtn').addEventListener('click', () => { resetForNewListing(); setStep(1); });
-  $('clearTaxonomyBtn').addEventListener('click', () => {
-    $('o_taxonomy_label').value = '';
-    $('taxonomyMatchRow').classList.add('hidden');
-    state.autoTaxonomyId = null;
-    state.autoTaxonomyLabel = null;
+  $('taxonomyChangeBtn').addEventListener('click', () => {
+    showTaxonomySearch();
+  });
+  $('taxonomyCancelBtn').addEventListener('click', () => {
+    showTaxonomyDisplay();
+    $('taxonomySearchInput').value = '';
+    $('taxonomyResults').innerHTML = '';
+    $('taxonomyResults').classList.add('hidden');
+  });
+  $('taxonomySearchInput').addEventListener('input', onTaxonomySearchInput);
+  $('taxonomySearchInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      showTaxonomyDisplay();
+      $('taxonomySearchInput').value = '';
+      $('taxonomyResults').innerHTML = '';
+      $('taxonomyResults').classList.add('hidden');
+    }
   });
   $('useExistingBtn').addEventListener('click', () => setStep(4));
 
@@ -1681,6 +1786,7 @@ async function init() {
     log('Restored unsaved draft from previous session. Go to Step 4 to review it.');
   }
 
+  updateTaxonomyDisplay();
   updateStep5Summary();
 }
 
