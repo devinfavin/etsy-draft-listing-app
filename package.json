@@ -1,6 +1,6 @@
 {
   "name": "etsy-draft-listing-app",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "description": "Local desktop-style web app to generate Etsy draft listings from synced photos + intake form using Anthropic Claude",
   "main": "electron/main.js",

@@ -1159,6 +1159,7 @@ app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
     time: safeNowIso(),
+    appVersion: APP_VERSION,
     missingEnvKeys: missingRequiredEnvKeys(),
     dataDir: DATA_DIR,
     envFile: envFilePathHint()

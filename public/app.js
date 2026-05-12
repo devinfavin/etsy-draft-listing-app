@@ -19,6 +19,7 @@ const state = {
   autoTaxonomyId: null,
   autoTaxonomyLabel: null,
   serverOnline: false,
+  appVersion: 'dev',
 };
 
 const STEP_COUNT = 5;
@@ -1078,11 +1079,147 @@ async function loadHealth() {
   try {
     const res = await api('/api/health');
     state.serverOnline = true;
+    state.appVersion = res.appVersion || 'dev';
     renderSetupBanner(res);
+    initVersionChip();
   } catch (err) {
     state.serverOnline = false;
     setConnectionStatus('error', 'Server offline');
     log(`Health check failed: ${err.message}`, 'error');
+  }
+}
+
+let lastUpdaterStatus = null;
+let versionChipResetTimer = null;
+let versionChipUnsubscribe = null;
+
+function initVersionChip() {
+  const btn = $('appVersionBtn');
+  const label = $('appVersionLabel');
+  if (!btn || !label) return;
+  label.textContent = `v${state.appVersion}`;
+  btn.classList.remove('hidden');
+
+  if (!window.appUpdater) {
+    btn.disabled = true;
+    btn.title = `v${state.appVersion} — auto-update is only available in the installed app.`;
+    return;
+  }
+
+  btn.title = `v${state.appVersion} — click to check for updates`;
+  btn.addEventListener('click', onVersionChipClick);
+  if (versionChipUnsubscribe) versionChipUnsubscribe();
+  versionChipUnsubscribe = window.appUpdater.onState(handleUpdaterState);
+}
+
+async function onVersionChipClick() {
+  const btn = $('appVersionBtn');
+  if (!window.appUpdater) return;
+  if (btn.classList.contains('ready')) {
+    await window.appUpdater.install();
+    return;
+  }
+  if (btn.classList.contains('checking') || btn.classList.contains('downloading')) {
+    return; // already in progress
+  }
+  await window.appUpdater.check();
+}
+
+function handleUpdaterState(stateObj) {
+  if (!stateObj) return;
+  applyUpdaterStateToChip(stateObj);
+  if (stateObj.status !== lastUpdaterStatus) {
+    logUpdaterTransition(stateObj);
+    lastUpdaterStatus = stateObj.status;
+  }
+}
+
+function applyUpdaterStateToChip(s) {
+  const btn = $('appVersionBtn');
+  const label = $('appVersionLabel');
+  if (!btn || !label) return;
+
+  if (versionChipResetTimer) {
+    clearTimeout(versionChipResetTimer);
+    versionChipResetTimer = null;
+  }
+  btn.classList.remove('checking', 'downloading', 'ready', 'latest-confirmed', 'error');
+  btn.disabled = false;
+
+  const current = state.appVersion || s.currentVersion || 'dev';
+  switch (s.status) {
+    case 'checking':
+      label.textContent = 'Checking…';
+      btn.classList.add('checking');
+      btn.title = 'Checking for updates';
+      break;
+    case 'downloading':
+      label.textContent = s.percent
+        ? `Downloading ${s.latestVersion || ''} · ${s.percent}%`
+        : `Downloading ${s.latestVersion || ''}`;
+      btn.classList.add('downloading');
+      btn.title = 'Update downloading in the background';
+      break;
+    case 'ready':
+      label.textContent = `Update ${s.latestVersion} ready`;
+      btn.classList.add('ready');
+      btn.title = `Click to install update ${s.latestVersion} and restart`;
+      break;
+    case 'latest':
+      label.textContent = `v${current} ✓`;
+      btn.classList.add('latest-confirmed');
+      btn.title = `You are on the latest version (${current})`;
+      versionChipResetTimer = setTimeout(() => {
+        if (lastUpdaterStatus === 'latest') resetChipToIdle();
+      }, 3500);
+      break;
+    case 'error':
+      label.textContent = `v${current} · check failed`;
+      btn.classList.add('error');
+      btn.title = s.error || 'Update check failed';
+      versionChipResetTimer = setTimeout(() => {
+        if (lastUpdaterStatus === 'error') resetChipToIdle();
+      }, 5000);
+      break;
+    case 'unsupported':
+      label.textContent = `v${current}`;
+      btn.disabled = true;
+      btn.title = 'Auto-update is not available in this build (running in dev mode).';
+      break;
+    case 'idle':
+    default:
+      label.textContent = `v${current}`;
+      btn.title = `v${current} — click to check for updates`;
+  }
+}
+
+function resetChipToIdle() {
+  const btn = $('appVersionBtn');
+  const label = $('appVersionLabel');
+  if (!btn || !label) return;
+  btn.classList.remove('checking', 'downloading', 'ready', 'latest-confirmed', 'error');
+  label.textContent = `v${state.appVersion || 'dev'}`;
+  btn.title = `v${state.appVersion || 'dev'} — click to check for updates`;
+  lastUpdaterStatus = 'idle';
+}
+
+function logUpdaterTransition(s) {
+  switch (s.status) {
+    case 'checking':
+      log('Checking for app updates…');
+      break;
+    case 'downloading':
+      log(`Update available: downloading ${s.latestVersion || '(new version)'} in the background…`);
+      break;
+    case 'ready':
+      log(`Update ${s.latestVersion} downloaded — click the version chip to install and restart.`);
+      break;
+    case 'latest':
+      log(`App is on the latest version (${s.latestVersion || state.appVersion}).`);
+      break;
+    case 'error':
+      log(`Update check failed: ${s.error || 'unknown error'}`, 'error');
+      break;
   }
 }
 

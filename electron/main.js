@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, dialog, Menu } = require('electron');
+const { app, BrowserWindow, shell, dialog, Menu, ipcMain } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const dotenv = require('dotenv');
@@ -63,6 +63,7 @@ function createWindow() {
     show: false,
     ...(fs.existsSync(customIcon) ? { icon: customIcon } : {}),
     webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true
@@ -83,6 +84,12 @@ function createWindow() {
       event.preventDefault();
       shell.openExternal(url);
     }
+  });
+
+  mainWindow.webContents.once('did-finish-load', () => {
+    // Replay last known updater state to the page after navigation/load so the version
+    // chip reflects reality if the window reloads.
+    broadcastUpdaterState();
   });
 
   mainWindow.once('ready-to-show', () => mainWindow.show());
@@ -108,47 +115,49 @@ async function loadAppIntoWindow(win) {
   }
 }
 
-app.whenReady().then(async () => {
-  // Minimal app menu (Edit/View/Window) for native shortcuts (copy/paste, devtools, etc.).
-  if (process.platform === 'win32') {
-    Menu.setApplicationMenu(buildAppMenu());
-  }
-  const win = createWindow();
-  await loadAppIntoWindow(win);
-  // Kick off the update check after the window is ready so the user has a UI even if
-  // the update server is slow. Errors are swallowed deliberately — we don't want a
-  // missed update check to interrupt normal use.
-  setTimeout(() => {
-    checkForUpdates().catch((err) => {
-      console.warn('[updater] background check failed:', err && err.message);
-    });
-  }, 4000);
-});
+// ─── Auto-updater state machine ────────────────────────────
+let updaterState = {
+  status: 'idle',
+  currentVersion: app.getVersion(),
+  latestVersion: null,
+  percent: 0,
+  error: null,
+  packaged: app.isPackaged
+};
 
-let updateCheckInFlight = false;
-
-async function checkForUpdates() {
-  if (updateCheckInFlight) return;
-  if (!app.isPackaged) {
-    console.log('[updater] skipped: not running from a packaged build');
-    return;
+function broadcastUpdaterState() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('updater:state', updaterState);
   }
-  updateCheckInFlight = true;
+}
+
+function setUpdaterState(patch) {
+  updaterState = { ...updaterState, ...patch };
+  broadcastUpdaterState();
+}
+
+let updaterEventsRegistered = false;
+function registerUpdaterEvents() {
+  if (updaterEventsRegistered) return;
+  updaterEventsRegistered = true;
+
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = false;
-  autoUpdater.on('error', (err) => {
-    console.warn('[updater] error:', err && err.message);
+
+  autoUpdater.on('checking-for-update', () => {
+    setUpdaterState({ status: 'checking', error: null });
   });
   autoUpdater.on('update-available', (info) => {
-    console.log(`[updater] update available: ${info.version}`);
+    setUpdaterState({ status: 'downloading', latestVersion: info.version, percent: 0, error: null });
   });
-  autoUpdater.on('update-not-available', () => {
-    console.log('[updater] no updates available');
+  autoUpdater.on('update-not-available', (info) => {
+    setUpdaterState({ status: 'latest', latestVersion: info ? info.version : updaterState.currentVersion });
   });
   autoUpdater.on('download-progress', (p) => {
-    console.log(`[updater] downloading: ${Math.round(p.percent)}%`);
+    setUpdaterState({ status: 'downloading', percent: Math.round(p.percent || 0) });
   });
   autoUpdater.on('update-downloaded', async (info) => {
+    setUpdaterState({ status: 'ready', latestVersion: info.version, percent: 100 });
     const choice = await dialog.showMessageBox({
       type: 'info',
       buttons: ['Install and restart', 'Later'],
@@ -159,16 +168,61 @@ async function checkForUpdates() {
       detail: 'The app will close briefly, install the update, then reopen.'
     });
     if (choice.response === 0) {
-      // isSilent=true skips the NSIS UI; isForceRunAfter=true re-launches the app.
       autoUpdater.quitAndInstall(true, true);
     }
   });
+  autoUpdater.on('error', (err) => {
+    setUpdaterState({ status: 'error', error: (err && err.message) ? err.message : String(err) });
+  });
+}
+
+let updateCheckInFlight = false;
+
+async function checkForUpdates() {
+  if (!app.isPackaged) {
+    setUpdaterState({ status: 'unsupported' });
+    console.log('[updater] skipped: not running from a packaged build');
+    return;
+  }
+  if (updateCheckInFlight) return;
+  registerUpdaterEvents();
+  updateCheckInFlight = true;
   try {
     await autoUpdater.checkForUpdates();
+  } catch (err) {
+    setUpdaterState({ status: 'error', error: (err && err.message) ? err.message : String(err) });
   } finally {
     updateCheckInFlight = false;
   }
 }
+
+ipcMain.handle('updater:check', async () => {
+  await checkForUpdates();
+  return updaterState;
+});
+
+ipcMain.handle('updater:install', async () => {
+  if (updaterState.status !== 'ready') return { ok: false, reason: 'not-ready' };
+  autoUpdater.quitAndInstall(true, true);
+  return { ok: true };
+});
+
+app.whenReady().then(async () => {
+  if (process.platform === 'win32') {
+    Menu.setApplicationMenu(buildAppMenu());
+  }
+  const win = createWindow();
+  await loadAppIntoWindow(win);
+  // Initial state push so the chip can render the current version immediately.
+  broadcastUpdaterState();
+  // Kick off the update check after the window is ready so the UI is responsive even if
+  // GitHub is slow.
+  setTimeout(() => {
+    checkForUpdates().catch((err) => {
+      console.warn('[updater] background check failed:', err && err.message);
+    });
+  }, 4000);
+});
 
 app.on('window-all-closed', () => {
   app.quit();
@@ -193,13 +247,10 @@ function buildAppMenu() {
         },
         {
           label: 'Check for updates',
-          click: async () => {
-            try {
-              await checkForUpdates();
-              if (!autoUpdater.currentVersion) return;
-            } catch (err) {
+          click: () => {
+            checkForUpdates().catch((err) => {
               dialog.showErrorBox('Update check failed', err && err.message ? err.message : String(err));
-            }
+            });
           }
         },
         { type: 'separator' },
