@@ -692,13 +692,10 @@ function normalizeStringArray(items, { maxItems = 50, maxLen = 120, lowerCase = 
 
 function deriveTagCandidatesFromIntake(intake) {
   const type = normalizeWhitespace(intake?.type);
-  const era = normalizeWhitespace(intake?.whenMade);
   const out = [
     type,
-    era && type ? `${era.replace(/_/g, ' ')} ${type}` : '',
-    'vintage',
-    'resale find',
-    'gift idea'
+    'gift idea',
+    'home decor'
   ];
   return out.filter(Boolean);
 }
@@ -815,7 +812,7 @@ function buildGeneratePrompt({ intake, cfg, selectedImages, includeImages }) {
     '',
     'Tone target:',
     '- Buyer-friendly, warm, and engaging while still factual and resale-appropriate.',
-    '- Use tasteful merchandising language when clearly supported (for example: vintage charm, cottage-inspired, giftable).',
+    '- Match the actual style of the item shown in the photos. Use merchandising adjectives (vintage, modern, minimalist, boho, industrial, etc.) ONLY when clearly supported by what you can see; do not default to any one aesthetic.',
     '- Do not exaggerate condition or make unsupported claims.',
     '',
     'Output requirements:',
@@ -837,7 +834,6 @@ function buildGeneratePrompt({ intake, cfg, selectedImages, includeImages }) {
     '',
     'Seller intake:',
     `What it is: ${safe(intake.type)}`,
-    `Era / when made: ${safe(intake.whenMade)}`,
     `Quantity: ${safe(intake.quantity)}`,
     `Price (USD): ${safe(intake.price)}`,
     `Anything the photos don't show: ${safe(intake.notes) || '(none — rely on photos)'}`,
@@ -847,11 +843,11 @@ function buildGeneratePrompt({ intake, cfg, selectedImages, includeImages }) {
       ? 'Context note: selected listing photos are provided to the model for visual reference.'
       : 'Context note: images are not provided to the model in this run.',
     '',
-    'Style exemplar (for tone only, do not copy verbatim):',
-    'Title example: Set of 2 Vintage Handpainted Ceramic Mugs | 12 oz Coffee Cups | Cottagecore Kitchen Decor',
-    'Description example opening: Add a sweet touch of vintage charm to your morning routine with this set...',
-    'Description example middle: Perfect for coffee, tea, or hot cocoa... unique handpainted character...',
-    'Description example ending: Great for cottagecore decor or gifting, with clear condition details and included quantity.'
+    'Voice reference (match this register, do not copy the words):',
+    '- Lead with the strongest visible detail: pattern, material, color, scale.',
+    '- Prefer specific nouns over generic adjectives. "Stoneware bud vase with cobalt drip glaze" beats "BEAUTIFUL UNIQUE VASE".',
+    '- Add a sentence about typical use or where it fits in a home only if it follows from what is shown.',
+    '- Close paragraph 3 with concrete condition info (chips, fading, scratches, wear) drawn from the photos.'
   ];
   return lines.join('\n');
 }
