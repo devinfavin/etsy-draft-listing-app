@@ -4,10 +4,6 @@ const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
 const crypto = require('crypto');
-const { execFile } = require('child_process');
-const { promisify } = require('util');
-
-const execFileAsync = promisify(execFile);
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -19,9 +15,28 @@ const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 const TOKENS_FILE = path.join(DATA_DIR, 'etsy_tokens.json');
 const OAUTH_PENDING_FILE = path.join(DATA_DIR, 'etsy_oauth_pending.json');
 const ITEMS_FILE = path.join(DATA_DIR, 'items.json');
+const ITEMS_NDJSON_FILE = path.join(DATA_DIR, 'items.ndjson');
+const ITEMS_LEGACY_FILE = path.join(DATA_DIR, 'items.json.legacy');
+const ITEMS_MAX_KEEP = 5000;
 
-app.use(express.json({ limit: '100mb' }));
-app.use(express.urlencoded({ extended: true, limit: '100mb' }));
+// Defense in depth: reject requests whose Host header isn't a loopback name.
+// The server also binds to 127.0.0.1 (see app.listen below) so this is mainly
+// a guard against DNS rebinding when running `npm start` in dev mode.
+app.use((req, res, next) => {
+  const raw = String(req.headers.host || '').toLowerCase();
+  // For IPv6 the host appears as [::1]:3000 — keep the brackets intact.
+  const match = raw.match(/^(\[[^\]]+\]|[^:]+)(:\d+)?$/);
+  const hostname = match ? match[1] : raw;
+  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '[::1]') {
+    return next();
+  }
+  return res.status(403).type('text/plain').send('Forbidden');
+});
+
+// 1 MB is plenty: image bytes never travel through JSON (selectedImages is just
+// a list of relative paths). The largest legitimate request is the support bundle.
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(express.static(PUBLIC_DIR));
 
 let configCache = null;
@@ -51,7 +66,7 @@ function ensureDataFiles() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
   if (!fs.existsSync(THUMB_CACHE_DIR)) fs.mkdirSync(THUMB_CACHE_DIR, { recursive: true });
   if (!fs.existsSync(CONFIG_FILE)) writeJson(CONFIG_FILE, defaultConfig());
-  if (!fs.existsSync(ITEMS_FILE)) writeJson(ITEMS_FILE, []);
+  // items.ndjson is created lazily by recordItem (or by the legacy migration).
 }
 
 function defaultEtsyListingDefaults() {
@@ -214,10 +229,6 @@ function saveConfig(nextCfg) {
     syncFolderResolveCache.checkedAtMs = 0;
   }
   return configCache;
-}
-
-function sanitizeForClientConfig(cfg) {
-  return cfg;
 }
 
 function errorResponse(res, status, message, details) {
@@ -441,18 +452,138 @@ function normalizeTokenStore(raw) {
   return { ...raw };
 }
 
+// ─── Encrypted token storage ───────────────────────────────
+// Tokens are sensitive. When running under Electron we encrypt the file at rest
+// via safeStorage (DPAPI on Windows, Keychain on macOS, libsecret on Linux).
+// In `npm start` dev mode safeStorage is unavailable, so we fall back to plaintext
+// and warn — that mode is for the maintainer only, not the shipped end user.
+const TOKENS_ENCRYPTED_PREFIX = 'ENC:v1:';
+let _safeStorageResolved = false;
+let _safeStorageCache = null;
+let _plaintextWriteWarned = false;
+
+function getSafeStorage() {
+  if (_safeStorageResolved) return _safeStorageCache;
+  _safeStorageResolved = true;
+  try {
+    // `require('electron')` outside an Electron process returns the path to the
+    // binary (a string), not the module — so the property access below is safe.
+    // eslint-disable-next-line global-require
+    const electron = require('electron');
+    if (electron && typeof electron === 'object' && electron.safeStorage && electron.safeStorage.isEncryptionAvailable()) {
+      _safeStorageCache = electron.safeStorage;
+    }
+  } catch {
+    // Electron not installed in this environment — leave cache null.
+  }
+  return _safeStorageCache;
+}
+
+function readTokensFromDisk() {
+  if (!fs.existsSync(TOKENS_FILE)) return { tokens: {}, wasPlaintext: false };
+  let raw;
+  try {
+    raw = fs.readFileSync(TOKENS_FILE, 'utf8');
+  } catch (err) {
+    console.error('Failed to read tokens file:', err);
+    return { tokens: {}, wasPlaintext: false };
+  }
+  if (!raw.trim()) return { tokens: {}, wasPlaintext: false };
+
+  if (raw.startsWith(TOKENS_ENCRYPTED_PREFIX)) {
+    const ss = getSafeStorage();
+    if (!ss) {
+      console.error('etsy_tokens.json is encrypted but safeStorage is unavailable in this process. Treating as not connected.');
+      return { tokens: {}, wasPlaintext: false };
+    }
+    try {
+      const cipherB64 = raw.slice(TOKENS_ENCRYPTED_PREFIX.length);
+      const decrypted = ss.decryptString(Buffer.from(cipherB64, 'base64'));
+      return { tokens: JSON.parse(decrypted), wasPlaintext: false };
+    } catch (err) {
+      console.error('Failed to decrypt etsy_tokens.json (likely a different user profile or corrupted file). Tokens treated as not connected — user can reconnect.', err);
+      return { tokens: {}, wasPlaintext: false };
+    }
+  }
+
+  // Legacy plaintext — parse and flag for migration.
+  try {
+    return { tokens: JSON.parse(raw), wasPlaintext: true };
+  } catch (err) {
+    console.error('Failed to parse tokens file:', err);
+    return { tokens: {}, wasPlaintext: false };
+  }
+}
+
+function writeTokensToDisk(tokens) {
+  const ss = getSafeStorage();
+  let payload;
+  if (ss) {
+    const cipher = ss.encryptString(JSON.stringify(tokens));
+    payload = TOKENS_ENCRYPTED_PREFIX + cipher.toString('base64');
+  } else {
+    if (!_plaintextWriteWarned) {
+      console.warn('safeStorage unavailable — writing etsy_tokens.json as plaintext. This is expected only in `npm start` dev mode.');
+      _plaintextWriteWarned = true;
+    }
+    payload = JSON.stringify(tokens, null, 2);
+  }
+
+  const dir = path.dirname(TOKENS_FILE);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  const tmpFile = path.join(
+    dir,
+    `.${path.basename(TOKENS_FILE)}.${process.pid}.${Date.now()}.${crypto.randomBytes(6).toString('hex')}.tmp`
+  );
+  try {
+    fs.writeFileSync(tmpFile, payload, 'utf8');
+    fs.renameSync(tmpFile, TOKENS_FILE);
+  } finally {
+    if (fs.existsSync(tmpFile)) {
+      try { fs.unlinkSync(tmpFile); } catch {}
+    }
+  }
+}
+
+// In-memory cache of the byStore map. Populated lazily; kept consistent by
+// routing all writes through saveTokens / forgetTokens.
+let tokensCache = null;
+
+function ensureTokensCache() {
+  if (tokensCache) return;
+  const { tokens, wasPlaintext } = readTokensFromDisk();
+  tokensCache = normalizeTokenStore(tokens);
+  if (wasPlaintext) {
+    // Eager migration: re-write encrypted on the next available pass.
+    try {
+      writeTokensToDisk(tokensCache);
+      if (getSafeStorage()) console.log('Migrated etsy_tokens.json to encrypted storage.');
+    } catch (err) {
+      console.error('Tokens migration write failed (will retry on next save):', err);
+    }
+  }
+}
+
 function loadTokens(storeKey = null) {
-  const raw = readJson(TOKENS_FILE, {});
-  const byStore = normalizeTokenStore(raw);
-  if (!storeKey) return byStore;
-  return byStore[String(storeKey)] || null;
+  ensureTokensCache();
+  if (!storeKey) return tokensCache;
+  return tokensCache[String(storeKey)] || null;
 }
 
 function saveTokens(storeKey, tokenPayload) {
   if (!storeKey) throw new Error('storeKey is required when saving Etsy tokens');
-  const byStore = loadTokens();
-  byStore[String(storeKey)] = tokenPayload;
-  writeJson(TOKENS_FILE, byStore);
+  ensureTokensCache();
+  tokensCache[String(storeKey)] = tokenPayload;
+  writeTokensToDisk(tokensCache);
+}
+
+function forgetTokens(storeKey) {
+  if (!storeKey) return false;
+  ensureTokensCache();
+  if (!(storeKey in tokensCache)) return false;
+  delete tokensCache[storeKey];
+  writeTokensToDisk(tokensCache);
+  return true;
 }
 
 function xApiKeyHeaderValue() {
@@ -472,50 +603,6 @@ function etsyRedirectUri() {
 }
 function appBaseUrl() {
   return (process.env.APP_BASE_URL || `http://localhost:${PORT}`).trim();
-}
-
-async function openFolderPicker(initialDirectory) {
-  if (process.platform !== 'win32') {
-    throw new Error('Native folder picker is only implemented for Windows in this app.');
-  }
-
-  const initialDir = String(initialDirectory || '').trim();
-  const initialDirEscaped = initialDir.replace(/'/g, "''");
-  const psScript = [
-    'Add-Type -AssemblyName System.Windows.Forms',
-    '$dialog = New-Object System.Windows.Forms.OpenFileDialog',
-    '$dialog.Title = "Select your photo folder"',
-    '$dialog.Filter = "Folders|*.folder"',
-    '$dialog.CheckFileExists = $false',
-    '$dialog.CheckPathExists = $true',
-    '$dialog.ValidateNames = $false',
-    '$dialog.FileName = "Select Folder"',
-    `$initial = '${initialDirEscaped}'`,
-    'if ($initial -and (Test-Path -LiteralPath $initial -PathType Container)) { $dialog.InitialDirectory = $initial }',
-    '$result = $dialog.ShowDialog()',
-    '$raw = $dialog.FileName',
-    '$chosen = ""',
-    'if ($result -eq [System.Windows.Forms.DialogResult]::OK) {',
-    '  if ($raw -and (Test-Path -LiteralPath $raw -PathType Container)) {',
-    '    $chosen = $raw',
-    '  } else {',
-    '    $chosen = [System.IO.Path]::GetDirectoryName($raw)',
-    '  }',
-    '  if ($chosen) { Write-Output $chosen }',
-    '}'
-  ].join('; ');
-
-  const { stdout } = await execFileAsync('powershell.exe', [
-    '-NoProfile',
-    '-NonInteractive',
-    '-ExecutionPolicy',
-    'Bypass',
-    '-Command',
-    psScript
-  ]);
-
-  const selected = String(stdout || '').trim();
-  return selected || null;
 }
 
 function createPkcePair() {
@@ -970,19 +1057,79 @@ async function callClaudeForListing({ intake, selectedImages, includeImages, cfg
   return { parsed: normalized, raw: json, visionImagesUsed, autoTaxonomyId, autoTaxonomyLabel };
 }
 
-function loadItems() {
-  return readJson(ITEMS_FILE, []);
-}
-function saveItems(items) {
-  writeJson(ITEMS_FILE, items);
-}
-
-function recordItem(entry) {
-  const items = loadItems();
-  items.unshift(entry);
-  saveItems(items.slice(0, 5000));
+// ─── Items log (append-only NDJSON) ────────────────────────
+// Previously a single JSON array rewritten on every record (O(N²) over a session).
+// Now: one JSON object per line, oldest first, newest appended. Reads are O(N) but
+// only one debug endpoint reads — recording is O(1).
+async function recordItem(entry) {
+  await fsp.appendFile(ITEMS_NDJSON_FILE, JSON.stringify(entry) + '\n', 'utf8');
   return entry;
 }
+
+async function loadItemsTail(limit = 100) {
+  // Streams the file with readline and keeps a sliding window of `limit` lines.
+  // Returns newest-first to match the previous loadItems() contract.
+  if (!fs.existsSync(ITEMS_NDJSON_FILE)) return [];
+  const readline = require('readline');
+  const stream = fs.createReadStream(ITEMS_NDJSON_FILE, { encoding: 'utf8' });
+  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+  const window = [];
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+    window.push(line);
+    if (window.length > limit) window.shift();
+  }
+  const out = [];
+  for (let i = window.length - 1; i >= 0; i--) {
+    try {
+      out.push(JSON.parse(window[i]));
+    } catch {
+      // Skip malformed lines rather than 500'ing the debug endpoint.
+    }
+  }
+  return out;
+}
+
+// One-time migration from the legacy items.json array file and startup compaction
+// of items.ndjson if it has grown past the keep cap. Runs synchronously at boot
+// so the file is in its final shape before any request arrives.
+function migrateAndCompactItemsLog() {
+  // 1. Legacy → NDJSON migration: items.json was newest-first; NDJSON is newest-last.
+  if (!fs.existsSync(ITEMS_NDJSON_FILE) && fs.existsSync(ITEMS_FILE)) {
+    try {
+      const legacy = readJson(ITEMS_FILE, []);
+      if (Array.isArray(legacy) && legacy.length) {
+        const lines = [];
+        for (let i = legacy.length - 1; i >= 0; i--) lines.push(JSON.stringify(legacy[i]));
+        fs.writeFileSync(ITEMS_NDJSON_FILE, lines.join('\n') + '\n', 'utf8');
+        fs.renameSync(ITEMS_FILE, ITEMS_LEGACY_FILE);
+        console.log(`Migrated ${legacy.length} legacy items.json record(s) to items.ndjson (old file kept as items.json.legacy).`);
+      } else {
+        // Empty/invalid legacy file — just rename out of the way so we don't keep retrying.
+        fs.renameSync(ITEMS_FILE, ITEMS_LEGACY_FILE);
+      }
+    } catch (err) {
+      console.error('items.json migration failed (legacy file left in place):', err);
+    }
+  }
+
+  // 2. Compaction: keep at most ITEMS_MAX_KEEP lines, drop the oldest.
+  try {
+    if (!fs.existsSync(ITEMS_NDJSON_FILE)) return;
+    const raw = fs.readFileSync(ITEMS_NDJSON_FILE, 'utf8');
+    const lines = raw.split(/\r?\n/).filter((l) => l.length > 0);
+    if (lines.length <= ITEMS_MAX_KEEP) return;
+    const kept = lines.slice(lines.length - ITEMS_MAX_KEEP);
+    const tmpFile = `${ITEMS_NDJSON_FILE}.${process.pid}.${Date.now()}.tmp`;
+    fs.writeFileSync(tmpFile, kept.join('\n') + '\n', 'utf8');
+    fs.renameSync(tmpFile, ITEMS_NDJSON_FILE);
+    console.log(`Compacted items.ndjson: dropped ${lines.length - kept.length} oldest record(s), kept ${kept.length}.`);
+  } catch (err) {
+    console.error('items.ndjson compaction failed (file left as-is):', err);
+  }
+}
+
+migrateAndCompactItemsLog();
 
 async function etsyApiFetch(url, { method = 'GET', headers = {}, body, storeKey } = {}) {
   const accessToken = await getValidEtsyAccessToken(storeKey);
@@ -1139,6 +1286,48 @@ async function uploadEtsyListingImage({ shopId, listingId, fullImagePath, rank, 
   });
 }
 
+// Uploads a sequence of photos to an existing draft listing. Never throws on a
+// per-photo failure — instead returns a structured result so the caller (and
+// ultimately the client) can offer a "retry remaining photos" recovery path.
+async function uploadPhotosToListing({ shopId, listingId, storeKey, rootDir, photos }) {
+  const uploaded = [];
+  const remaining = Array.isArray(photos) ? [...photos] : [];
+  let lastError = null;
+  let listingMissing = false;
+
+  while (remaining.length) {
+    const photo = remaining[0];
+    try {
+      const full = safeResolveUnder(rootDir, photo.relPath);
+      const resp = await uploadEtsyListingImage({
+        shopId,
+        listingId,
+        fullImagePath: full,
+        rank: Number(photo.rank),
+        altText: photo.altText || null,
+        storeKey
+      });
+      uploaded.push({ relPath: photo.relPath, rank: photo.rank, response: resp });
+      remaining.shift();
+    } catch (err) {
+      const status = Number(err && err.status) || null;
+      lastError = {
+        relPath: photo.relPath,
+        rank: photo.rank,
+        message: err && err.message ? err.message : String(err),
+        status,
+        details: err && err.details ? err.details : null
+      };
+      // If the listing itself is gone (deleted on Etsy or never existed), stop
+      // immediately — every subsequent upload will fail the same way.
+      if (status === 404) listingMissing = true;
+      break;
+    }
+  }
+
+  return { uploaded, remaining, lastError, listingMissing };
+}
+
 function missingRequiredEnvKeys() {
   const required = ['ANTHROPIC_API_KEY', 'ETSY_CLIENT_ID', 'ETSY_X_API_KEY', 'ETSY_REDIRECT_URI'];
   return required.filter((k) => !String(process.env[k] || '').trim());
@@ -1206,7 +1395,7 @@ app.get('/api/support-info', (_req, res) => {
       configFile: { path: CONFIG_FILE, exists: fs.existsSync(CONFIG_FILE) },
       tokensFile: { path: TOKENS_FILE, exists: fs.existsSync(TOKENS_FILE) },
       envFile: { path: envFilePathHint(), exists: fs.existsSync(envFilePathHint()) },
-      itemsFile: { path: ITEMS_FILE, exists: fs.existsSync(ITEMS_FILE) },
+      itemsFile: { path: ITEMS_NDJSON_FILE, exists: fs.existsSync(ITEMS_NDJSON_FILE) },
       thumbCacheDir: { path: THUMB_CACHE_DIR, exists: fs.existsSync(THUMB_CACHE_DIR) }
     };
 
@@ -1249,7 +1438,7 @@ app.get('/api/support-info', (_req, res) => {
 });
 
 app.get('/api/config', (_req, res) => {
-  res.json({ ok: true, config: sanitizeForClientConfig(getConfig()) });
+  res.json({ ok: true, config: getConfig() });
 });
 
 app.post('/api/config', (req, res) => {
@@ -1268,18 +1457,9 @@ app.post('/api/config', (req, res) => {
       }
     };
     const saved = saveConfig(next);
-    res.json({ ok: true, config: sanitizeForClientConfig(saved) });
+    res.json({ ok: true, config: saved });
   } catch (err) {
     errorResponse(res, 500, err.message);
-  }
-});
-
-app.post('/api/browse-folder', async (req, res) => {
-  try {
-    const folder = await openFolderPicker(req.body?.initialDirectory);
-    res.json({ ok: true, folder, cancelled: !folder });
-  } catch (err) {
-    errorResponse(res, 400, err.message);
   }
 });
 
@@ -1441,7 +1621,7 @@ app.post('/api/generate-listing', async (req, res) => {
       storeKey: activeStore.key
     });
 
-    const record = recordItem({
+    const record = await recordItem({
       id: crypto.randomUUID(),
       createdAt: safeNowIso(),
       status: 'generated',
@@ -1462,9 +1642,13 @@ app.post('/api/generate-listing', async (req, res) => {
   }
 });
 
-app.get('/api/items', (_req, res) => {
-  const items = loadItems();
-  res.json({ ok: true, items: items.slice(0, 100) });
+app.get('/api/items', async (_req, res) => {
+  try {
+    const items = await loadItemsTail(100);
+    res.json({ ok: true, items });
+  } catch (err) {
+    errorResponse(res, 500, err.message);
+  }
 });
 
 app.get('/api/etsy/shipping-profiles', async (req, res) => {
@@ -1573,7 +1757,7 @@ app.post('/api/etsy/refresh-shop-info', async (req, res) => {
 
     applyShopInfoToStore(store.key, shopInfo);
     prefetchTaxonomyInBackground(store.key);
-    res.json({ ok: true, shopInfo, config: sanitizeForClientConfig(getConfig()) });
+    res.json({ ok: true, shopInfo, config: getConfig() });
   } catch (err) {
     errorResponse(res, err.status || 500, err.message, err.details || null);
   }
@@ -1588,12 +1772,8 @@ app.post('/api/etsy/disconnect', (req, res) => {
     const target = (cfg.etsy?.stores || []).find((s) => s.key === storeKey);
     if (!target) return errorResponse(res, 404, `Unknown storeKey: ${storeKey}`);
 
-    // Clear tokens for this store.
-    const allTokens = loadTokens();
-    if (allTokens[storeKey]) {
-      delete allTokens[storeKey];
-      writeJson(TOKENS_FILE, allTokens);
-    }
+    // Clear tokens for this store (routes through the encrypted-write path).
+    forgetTokens(storeKey);
 
     // Reset Etsy-derived fields; keep lastFolder so reconnecting picks up where we left off.
     const fallbackIndex = STORE_KEYS.indexOf(storeKey);
@@ -1614,7 +1794,7 @@ app.post('/api/etsy/disconnect', (req, res) => {
       etsy: { ...cfg.etsy, stores }
     });
 
-    res.json({ ok: true, config: sanitizeForClientConfig(saved) });
+    res.json({ ok: true, config: saved });
   } catch (err) {
     errorResponse(res, 500, err.message);
   }
@@ -1827,22 +2007,40 @@ app.post('/api/etsy/create-draft', async (req, res) => {
       throw err;
     }
 
-    const uploadResults = [];
     const altTexts = Array.isArray(generated?.image_alt_text) ? generated.image_alt_text : [];
-    let rank = 1;
-    for (const relPath of selectedImages) {
-      const full = safeResolveUnder(root, relPath);
-      const altText = altTexts[rank - 1] || null;
-      const resp = await uploadEtsyListingImage({
-        shopId,
-        listingId,
-        fullImagePath: full,
-        rank,
-        altText,
-        storeKey: activeStore.key
+    const photos = selectedImages.map((relPath, idx) => ({
+      relPath,
+      rank: idx + 1,
+      altText: altTexts[idx] || null
+    }));
+
+    const uploadResult = await uploadPhotosToListing({
+      shopId,
+      listingId,
+      storeKey: activeStore.key,
+      rootDir: root,
+      photos
+    });
+
+    if (uploadResult.remaining.length) {
+      // Partial success: the listing exists on Etsy but not every photo made it.
+      // Return a structured body so the client can offer a retry path. We use
+      // 200 + ok:false because the *listing* succeeded — wrapping in a 5xx would
+      // discard the listingId the client needs to resume.
+      return res.json({
+        ok: false,
+        error: `Draft created on Etsy, but ${uploadResult.remaining.length} of ${photos.length} photos failed to upload.`,
+        partial: {
+          listingId,
+          shopId,
+          storeKey: activeStore.key,
+          storeLabel: activeStore.label,
+          uploaded: uploadResult.uploaded.map((u) => ({ relPath: u.relPath, rank: u.rank })),
+          remaining: uploadResult.remaining,
+          listingMissing: uploadResult.listingMissing,
+          error: uploadResult.lastError
+        }
       });
-      uploadResults.push({ relPath, rank, response: resp });
-      rank += 1;
     }
 
     const etsyRecord = {
@@ -1852,10 +2050,10 @@ app.post('/api/etsy/create-draft', async (req, res) => {
       shopId,
       createdAt: safeNowIso(),
       createResp,
-      uploadResults
+      uploadResults: uploadResult.uploaded
     };
 
-    const itemRecord = recordItem({
+    const itemRecord = await recordItem({
       id: crypto.randomUUID(),
       createdAt: safeNowIso(),
       status: 'etsy_draft_created',
@@ -1877,6 +2075,55 @@ app.post('/api/etsy/create-draft', async (req, res) => {
   }
 });
 
+// Resume photo upload to an existing draft after a partial failure. The client
+// holds the partial-draft state and calls this with the photos that didn't
+// make it the first time. Same {partial: ...} response shape on continued failure.
+app.post('/api/etsy/resume-upload', async (req, res) => {
+  try {
+    const listingId = String(req.body?.listingId || '').trim();
+    const shopId = String(req.body?.shopId || '').trim();
+    const photos = Array.isArray(req.body?.photos) ? req.body.photos : [];
+    if (!listingId || !shopId) return errorResponse(res, 400, 'listingId and shopId are required');
+    if (!photos.length) return errorResponse(res, 400, 'No photos to upload');
+
+    const cfg = getConfig();
+    const storeKey = String(req.body?.storeKey || '').trim() || cfg.etsy?.activeStoreKey;
+    const store = getStoreByKeyFromConfig(cfg, storeKey);
+    if (!store) return errorResponse(res, 404, `Unknown storeKey: ${storeKey}`);
+
+    const root = resolveSyncFolder(cfg);
+
+    const uploadResult = await uploadPhotosToListing({
+      shopId,
+      listingId,
+      storeKey: store.key,
+      rootDir: root,
+      photos
+    });
+
+    if (uploadResult.remaining.length) {
+      return res.json({
+        ok: false,
+        error: `${uploadResult.remaining.length} photo(s) still failed to upload.`,
+        partial: {
+          listingId,
+          shopId,
+          storeKey: store.key,
+          storeLabel: store.label,
+          uploaded: uploadResult.uploaded.map((u) => ({ relPath: u.relPath, rank: u.rank })),
+          remaining: uploadResult.remaining,
+          listingMissing: uploadResult.listingMissing,
+          error: uploadResult.lastError
+        }
+      });
+    }
+
+    res.json({ ok: true, listingId, uploaded: uploadResult.uploaded.length });
+  } catch (err) {
+    errorResponse(res, err.status || 500, err.message, err.details || null);
+  }
+});
+
 function escapeHtml(str) {
   return String(str)
     .replace(/&/g, '&amp;')
@@ -1885,7 +2132,9 @@ function escapeHtml(str) {
 }
 
 const ready = new Promise((resolve, reject) => {
-  const server = app.listen(PORT, () => {
+  // Loopback-only bind: the app is a single-user desktop tool. Binding to
+  // 0.0.0.0 (the Express default) exposes every endpoint to anyone on the LAN.
+  const server = app.listen(PORT, '127.0.0.1', () => {
     console.log(`Etsy Draft Listing App running at ${appBaseUrl()}`);
     const missing = missingRequiredEnvKeys();
     if (missing.length) {

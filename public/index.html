@@ -48,6 +48,10 @@
       <span id="setupBannerMessage"></span>
       <span id="setupBannerPathLabel" class="setup-banner-path"></span>
     </div>
+    <div id="resumeBanner" class="resume-banner hidden">
+      <span><strong>Picked up where you left off.</strong> <span id="resumeBannerDetail"></span></span>
+      <button id="dismissResumeBtn" type="button" class="resume-banner-action">Start fresh</button>
+    </div>
     <section class="wizard-progress panel">
       <div class="progress-label">Step <span id="progressCurrent">1</span> of <span id="progressTotal">5</span></div>
       <div id="progressBar" class="progress-bar" role="progressbar" aria-valuemin="1" aria-valuemax="5" aria-valuenow="1">
@@ -302,7 +306,20 @@
         <button id="createEtsyDraftBtn">Create Etsy Draft (Unpublished)</button>
       </div>
       <div id="etsyResult" class="result-box"></div>
+
+      <div id="partialDraftPanel" class="partial-draft-panel hidden" role="alert">
+        <strong>Draft created, but some photos didn't upload.</strong>
+        <p id="partialDraftSummary" class="help"></p>
+        <p id="partialDraftError" class="help"></p>
+        <div class="row gap wrap">
+          <button id="resumeUploadBtn" type="button">Retry remaining photos</button>
+          <button id="openInEtsyFromPartialBtn" type="button" class="secondary">Open draft in Etsy</button>
+          <button id="discardPartialDraftBtn" type="button" class="secondary">Discard recovery info</button>
+        </div>
+      </div>
+
       <div id="postDraftRow" class="row gap wrap nav-row hidden">
+        <button id="openInEtsyBtn" class="secondary" type="button">Open draft in Etsy</button>
         <button id="startNewListingBtn">New Listing</button>
       </div>
     </section>

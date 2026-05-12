@@ -207,6 +207,22 @@ ipcMain.handle('updater:install', async () => {
   return { ok: true };
 });
 
+ipcMain.handle('dialog:pickFolder', async (_event, initialDirectory) => {
+  const opts = {
+    title: 'Select your photo folder',
+    properties: ['openDirectory']
+  };
+  const initialDir = String(initialDirectory || '').trim();
+  if (initialDir && fs.existsSync(initialDir)) opts.defaultPath = initialDir;
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, opts)
+    : await dialog.showOpenDialog(opts);
+  if (result.canceled || !Array.isArray(result.filePaths) || !result.filePaths.length) {
+    return { cancelled: true, folder: null };
+  }
+  return { cancelled: false, folder: result.filePaths[0] };
+});
+
 app.whenReady().then(async () => {
   if (process.platform === 'win32') {
     Menu.setApplicationMenu(buildAppMenu());

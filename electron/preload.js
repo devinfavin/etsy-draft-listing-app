@@ -9,3 +9,7 @@ contextBridge.exposeInMainWorld('appUpdater', {
     return () => ipcRenderer.removeListener('updater:state', handler);
   }
 });
+
+contextBridge.exposeInMainWorld('appNative', {
+  pickFolder: (initialDirectory) => ipcRenderer.invoke('dialog:pickFolder', initialDirectory)
+});

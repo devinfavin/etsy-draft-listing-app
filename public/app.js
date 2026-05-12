@@ -21,6 +21,12 @@ const state = {
   serverOnline: false,
   appVersion: 'dev',
   hasUsedApp: false,
+  lastListingId: null,
+  partialDraft: null,
+  // Set during a wizard-state restore so dropdowns populated *after* the
+  // restore can still select the right option.
+  pendingShippingId: null,
+  pendingReadinessId: null,
 };
 
 const STEP_COUNT = 5;
@@ -73,6 +79,13 @@ function toggleTheme() {
 }
 
 const DRAFT_STORAGE_KEY = 'etsy_listing_draft';
+const PARTIAL_DRAFT_STORAGE_KEY = 'etsy_partial_draft';
+const WIZARD_STATE_STORAGE_KEY = 'etsy_wizard_state';
+const ETSY_DRAFT_URL_TEMPLATE = 'https://www.etsy.com/your/shops/me/tools/listings/{id}';
+
+// While restoring persisted state we don't want every form-change handler to
+// immediately re-save what we just loaded — set this to true around the restore.
+let suspendWizardStateSave = false;
 let shippingProfilesLoading = false;
 let readinessStatesLoading = false;
 
@@ -230,6 +243,7 @@ async function api(url, options = {}) {
     const message = json.error || `Request failed (${resp.status})`;
     const err = new Error(message);
     err.details = json.details;
+    err.payload = json;
     throw err;
   }
   return json;
@@ -391,6 +405,7 @@ function normalizeRelPath(relPath) {
 
 function setStep(step) {
   state.step = Math.min(Math.max(step, 1), STEP_COUNT);
+  scheduleWizardStateSave();
 
   for (let i = 1; i <= STEP_COUNT; i += 1) {
     const panel = $(`step${i}`);
@@ -473,15 +488,14 @@ function setGeneratedOutput(out) {
 }
 
 function collectGeneratedOutput() {
+  // bullet_specs are intentionally not returned: the server normalizes them
+  // into the description body and never reads the field on its own.
   return {
     title: $('o_title').value.trim(),
     description: $('o_description').value.trim(),
     tags: $('o_tags').value.split(',').map((s) => s.trim()).filter(Boolean),
     etsy_materials: $('o_materials').value.split(',').map((s) => s.trim()).filter(Boolean),
     image_alt_text: $('o_alt_text').value.split(/\n+/).map((s) => s.trim()).filter(Boolean),
-    // bullet_specs stay in state.generated so they're still in the support log,
-    // but they're already woven into the description so we don't resend them.
-    bullet_specs: Array.isArray(state.generated?.bullet_specs) ? state.generated.bullet_specs : [],
   };
 }
 
@@ -495,6 +509,127 @@ function loadGeneratedFromStorage() {
 
 function clearGeneratedFromStorage() {
   try { localStorage.removeItem(DRAFT_STORAGE_KEY); } catch {}
+}
+
+function savePartialDraftToStorage(partial) {
+  try { localStorage.setItem(PARTIAL_DRAFT_STORAGE_KEY, JSON.stringify(partial)); } catch {}
+}
+
+function loadPartialDraftFromStorage() {
+  try { return JSON.parse(localStorage.getItem(PARTIAL_DRAFT_STORAGE_KEY) || 'null'); } catch { return null; }
+}
+
+function clearPartialDraftFromStorage() {
+  try { localStorage.removeItem(PARTIAL_DRAFT_STORAGE_KEY); } catch {}
+}
+
+function captureWizardState() {
+  return {
+    step: state.step,
+    selectedImages: [...state.selectedImages],
+    intake: {
+      type: $('f_type')?.value || '',
+      whenMade: $('f_whenMade')?.value || '',
+      quantity: $('f_quantity')?.value || '',
+      price: $('f_price')?.value || '',
+      notes: $('f_notes')?.value || '',
+      shippingProfileId: $('f_shippingProfileId')?.value || '',
+      readinessStateId: $('f_readinessStateId')?.value || ''
+    },
+    autoTaxonomyId: state.autoTaxonomyId || null,
+    autoTaxonomyLabel: state.autoTaxonomyLabel || null,
+    savedAt: new Date().toISOString()
+  };
+}
+
+function hasMeaningfulWizardState(snapshot) {
+  if (!snapshot) return false;
+  if (snapshot.step > 1) return true;
+  if (Array.isArray(snapshot.selectedImages) && snapshot.selectedImages.length) return true;
+  const i = snapshot.intake || {};
+  return Boolean(
+    (i.type || '').trim() ||
+    (i.price || '').trim() ||
+    (i.notes || '').trim() ||
+    (i.whenMade || '').trim() ||
+    (i.shippingProfileId || '').trim() ||
+    (i.readinessStateId || '').trim()
+  );
+}
+
+let wizardSaveTimer = null;
+function scheduleWizardStateSave() {
+  if (suspendWizardStateSave) return;
+  if (wizardSaveTimer) clearTimeout(wizardSaveTimer);
+  wizardSaveTimer = setTimeout(() => {
+    wizardSaveTimer = null;
+    const snapshot = captureWizardState();
+    if (!hasMeaningfulWizardState(snapshot)) {
+      clearWizardStateFromStorage();
+      return;
+    }
+    try { localStorage.setItem(WIZARD_STATE_STORAGE_KEY, JSON.stringify(snapshot)); } catch {}
+  }, 500);
+}
+
+function loadWizardStateFromStorage() {
+  try { return JSON.parse(localStorage.getItem(WIZARD_STATE_STORAGE_KEY) || 'null'); } catch { return null; }
+}
+
+function clearWizardStateFromStorage() {
+  try { localStorage.removeItem(WIZARD_STATE_STORAGE_KEY); } catch {}
+}
+
+function applyWizardStateToForm(snapshot) {
+  if (!snapshot) return;
+  suspendWizardStateSave = true;
+  try {
+    const i = snapshot.intake || {};
+    if ($('f_type')) $('f_type').value = i.type || '';
+    if ($('f_whenMade')) $('f_whenMade').value = i.whenMade || '';
+    if ($('f_quantity')) $('f_quantity').value = i.quantity || '1';
+    if ($('f_price')) $('f_price').value = i.price || '';
+    if ($('f_notes')) $('f_notes').value = i.notes || '';
+    // Shipping/readiness dropdowns are populated async — we set the value here;
+    // if the matching <option> doesn't exist yet, the value will be applied again
+    // after the dropdown is populated below.
+    // Stash desired dropdown values; populate-dropdown calls (which happen
+    // after async fetches complete) consult these to set the right option.
+    if (i.shippingProfileId) state.pendingShippingId = i.shippingProfileId;
+    if (i.readinessStateId) state.pendingReadinessId = i.readinessStateId;
+    state.selectedImages = Array.isArray(snapshot.selectedImages) ? [...snapshot.selectedImages] : [];
+    state.autoTaxonomyId = snapshot.autoTaxonomyId || null;
+    state.autoTaxonomyLabel = snapshot.autoTaxonomyLabel || null;
+  } finally {
+    suspendWizardStateSave = false;
+  }
+}
+
+function showResumeBanner(snapshot) {
+  const banner = $('resumeBanner');
+  const detail = $('resumeBannerDetail');
+  if (!banner) return;
+  const parts = [];
+  if (Array.isArray(snapshot.selectedImages) && snapshot.selectedImages.length) {
+    parts.push(`${snapshot.selectedImages.length} photo(s) selected`);
+  }
+  if (snapshot.intake?.type) parts.push(`item: "${snapshot.intake.type}"`);
+  if (snapshot.step > 1) parts.push(`Step ${snapshot.step}`);
+  if (detail) detail.textContent = parts.length ? parts.join(' • ') + '.' : '';
+  banner.classList.remove('hidden');
+}
+
+function hideResumeBanner() {
+  const banner = $('resumeBanner');
+  if (banner) banner.classList.add('hidden');
+}
+
+function discardResumeAndStartFresh() {
+  clearWizardStateFromStorage();
+  resetForNewListing();
+  hideResumeBanner();
+  setStep(1);
+  log('Discarded restored session — starting fresh.');
 }
 
 function resetStep3Form() {
@@ -515,7 +650,13 @@ function resetForNewListing() {
   state.selectedImages = [];
   state.autoTaxonomyId = null;
   state.autoTaxonomyLabel = null;
+  state.lastListingId = null;
+  state.partialDraft = null;
   clearGeneratedFromStorage();
+  clearPartialDraftFromStorage();
+  clearWizardStateFromStorage();
+  hidePartialDraftPanel();
+  hideResumeBanner();
   resetStep3Form();
   renderSelectedStrip();
   renderBrowserItems();
@@ -665,6 +806,7 @@ function selectTaxonomy(match) {
   $('taxonomySearchInput').value = '';
   log(`Etsy category set to "${match.name}" (#${match.id})`);
   updateStep5Summary();
+  scheduleWizardStateSave();
 }
 
 function showFieldError(errorId, message) {
@@ -1010,6 +1152,7 @@ function toggleSelect(relPath, photoMeta) {
 
   renderSelectedStrip();
   renderBrowserItems();
+  scheduleWizardStateSave();
 }
 
 function clearSelection() {
@@ -1483,13 +1626,14 @@ async function createEtsyDraft() {
       }),
     });
 
-    const storeLabel = res?.etsy?.storeLabel || getActiveStore()?.label || 'Selected store';
-    $('etsyResult').textContent = `Draft created successfully in ${storeLabel}. Listing ID: ${res.listingId}\nReview it in Etsy Seller before publishing.`;
-    log(`Etsy draft created. listingId=${res.listingId}`);
-    clearGeneratedFromStorage();
-    $('postDraftRow').classList.remove('hidden');
-    await refreshEtsyStatus();
+    onDraftFullSuccess(res);
   } catch (err) {
+    // Partial success: the listing was created but some photos didn't upload.
+    // The server returned { ok:false, partial:{...} } — surface it as recovery.
+    if (err.payload && err.payload.partial) {
+      handlePartialDraft(err.payload.partial);
+      return;
+    }
     const friendly = friendlyErrorMessage(err);
     $('etsyResult').textContent = `Error: ${friendly}`;
     log(`Etsy draft failed: ${friendly}`, 'error');
@@ -1500,6 +1644,167 @@ async function createEtsyDraft() {
     draftBtn.disabled = false;
     draftBtn.textContent = 'Create Etsy Draft (Unpublished)';
   }
+}
+
+function onDraftFullSuccess(res) {
+  const storeLabel = res?.etsy?.storeLabel || getActiveStore()?.label || 'Selected store';
+  $('etsyResult').textContent = `Draft created successfully in ${storeLabel}. Listing ID: ${res.listingId}\nReview it in Etsy Seller before publishing.`;
+  log(`Etsy draft created. listingId=${res.listingId}`);
+  state.lastListingId = String(res.listingId || '') || null;
+  state.partialDraft = null;
+  clearGeneratedFromStorage();
+  clearPartialDraftFromStorage();
+  clearWizardStateFromStorage();
+  hidePartialDraftPanel();
+  hideResumeBanner();
+  $('postDraftRow').classList.remove('hidden');
+  refreshEtsyStatus().catch(() => {});
+}
+
+function handlePartialDraft(partial) {
+  state.partialDraft = {
+    ...partial,
+    savedAt: new Date().toISOString()
+  };
+  savePartialDraftToStorage(state.partialDraft);
+  state.lastListingId = String(partial.listingId || '') || null;
+  // The listing exists — clear the AI draft (it's now embodied as the Etsy listing).
+  clearGeneratedFromStorage();
+  $('etsyResult').textContent = '';
+  renderPartialDraftPanel();
+  log(`Partial draft: listing ${partial.listingId} created, ${partial.remaining.length} photo(s) still to upload.`, 'error');
+}
+
+function renderPartialDraftPanel() {
+  const panel = $('partialDraftPanel');
+  const summary = $('partialDraftSummary');
+  const errorEl = $('partialDraftError');
+  if (!panel || !state.partialDraft) return;
+  const p = state.partialDraft;
+  const total = (p.uploaded?.length || 0) + (p.remaining?.length || 0);
+  const uploadedCount = p.uploaded?.length || 0;
+  const storeLabel = p.storeLabel || '(unknown store)';
+
+  if (p.listingMissing) {
+    summary.textContent = `Listing #${p.listingId} no longer exists on Etsy in ${storeLabel}. Recovery is not possible.`;
+  } else {
+    summary.textContent = `Listing #${p.listingId} in ${storeLabel}: ${uploadedCount} of ${total} photos uploaded. ${p.remaining.length} remaining.`;
+  }
+
+  const errMsg = p.error && p.error.message ? p.error.message : '';
+  const errPath = p.error && p.error.relPath ? ` (${p.error.relPath})` : '';
+  errorEl.textContent = errMsg ? `Last error${errPath}: ${errMsg}` : '';
+
+  const resumeBtn = $('resumeUploadBtn');
+  if (resumeBtn) {
+    resumeBtn.disabled = !!p.listingMissing || !p.remaining?.length;
+    resumeBtn.textContent = p.listingMissing ? 'Cannot retry (listing deleted)' : `Retry remaining ${p.remaining.length} photo(s)`;
+  }
+
+  panel.classList.remove('hidden');
+}
+
+function hidePartialDraftPanel() {
+  const panel = $('partialDraftPanel');
+  if (panel) panel.classList.add('hidden');
+}
+
+async function resumePartialUpload() {
+  const p = state.partialDraft;
+  if (!p || !p.remaining?.length) return;
+
+  const activeKey = getActiveStoreKey();
+  if (p.storeKey && activeKey !== p.storeKey) {
+    alert(`This recovery is for ${p.storeLabel || p.storeKey}. Switch to that store on Step 1 first.`);
+    return;
+  }
+
+  const btn = $('resumeUploadBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Uploading…'; }
+  try {
+    const res = await api('/api/etsy/resume-upload', {
+      method: 'POST',
+      body: JSON.stringify({
+        listingId: p.listingId,
+        shopId: p.shopId,
+        storeKey: p.storeKey,
+        photos: p.remaining
+      })
+    });
+    // Full success — promote to a normal post-draft state.
+    log(`Resumed upload completed. Listing ${p.listingId} now has all photos.`);
+    onDraftFullSuccess({ listingId: p.listingId, etsy: { storeLabel: p.storeLabel } });
+  } catch (err) {
+    if (err.payload && err.payload.partial) {
+      // Still partial — narrow `remaining` and re-render.
+      handlePartialDraft(err.payload.partial);
+      return;
+    }
+    const friendly = friendlyErrorMessage(err);
+    log(`Resume upload failed: ${friendly}`, 'error');
+    logErrorDetails(err);
+    alert(`Resume upload failed:\n\n${friendly}`);
+  } finally {
+    if (btn && state.partialDraft) {
+      btn.disabled = false;
+      renderPartialDraftPanel();
+    }
+  }
+}
+
+function openLastListingInEtsy() {
+  const id = state.lastListingId;
+  if (!id) {
+    alert('No listing to open yet. Create a draft first.');
+    return;
+  }
+  const url = ETSY_DRAFT_URL_TEMPLATE.replace('{id}', encodeURIComponent(id));
+  // setWindowOpenHandler in Electron's main process delegates to shell.openExternal,
+  // so this opens the user's default browser rather than a new Electron window.
+  window.open(url, '_blank', 'noopener');
+  log(`Opened Etsy seller dashboard for listing #${id}.`);
+}
+
+function discardPartialDraft() {
+  const p = state.partialDraft;
+  if (!p) return;
+  if (!confirm(`Discard recovery info for listing #${p.listingId}?\n\nThe draft will remain on Etsy as-is; you'll need to fix it manually in the seller dashboard.`)) {
+    return;
+  }
+  state.partialDraft = null;
+  clearPartialDraftFromStorage();
+  hidePartialDraftPanel();
+  $('etsyResult').textContent = '';
+  log(`Discarded partial-draft recovery info for listing #${p.listingId}.`);
+}
+
+function extractEtsyErrorDetail(details) {
+  // Etsy returns at least four shapes depending on the endpoint and failure mode.
+  if (Array.isArray(details)) {
+    // Validation errors: [{message, type}, ...]
+    return details.map((e) => e?.message || e?.type || '').filter(Boolean).join('; ');
+  }
+  if (!details || typeof details !== 'object') return '';
+
+  // Wrapped error: {error: {message, type}}
+  if (details.error && typeof details.error === 'object') {
+    const inner = details.error.message || details.error.type || '';
+    if (inner) return inner;
+  }
+
+  // Flat shapes: {error_description, message, error: "string"}
+  const flat =
+    details.error_description ||
+    details.message ||
+    (typeof details.error === 'string' ? details.error : '') ||
+    '';
+  if (flat) return flat;
+
+  // Last-resort: server fell back to {raw: text} when Etsy returned non-JSON.
+  if (typeof details.raw === 'string' && details.raw.trim()) {
+    return details.raw.trim().slice(0, 200);
+  }
+  return '';
 }
 
 function friendlyErrorMessage(err) {
@@ -1517,12 +1822,7 @@ function friendlyErrorMessage(err) {
     return 'Invalid or missing API key. Check your ANTHROPIC_API_KEY in .env and restart the server.';
   }
   if (msg.includes('Etsy API request failed')) {
-    let etsyDetail = '';
-    if (Array.isArray(details)) {
-      etsyDetail = details.map((e) => e.message || e.type || '').filter(Boolean).join('; ');
-    } else {
-      etsyDetail = details.error_description || details.message || details.error || '';
-    }
+    const etsyDetail = extractEtsyErrorDetail(details);
     return etsyDetail ? `Etsy rejected the request: ${etsyDetail}` : msg;
   }
   return msg;
@@ -1586,22 +1886,30 @@ async function continueToPhotos() {
 }
 
 async function browseSyncFolder() {
+  if (!window.appNative || typeof window.appNative.pickFolder !== 'function') {
+    alert('Folder browse is only available inside the desktop app. Type the folder path into the field instead.');
+    return;
+  }
   try {
     const current = $('syncFolder').value.trim();
-    const res = await api('/api/browse-folder', {
-      method: 'POST',
-      body: JSON.stringify({ initialDirectory: current }),
-    });
-    if (res.cancelled) return;
-    if (res.folder) {
-      $('syncFolder').value = res.folder;
-      scheduleAutoSave();
-      showFieldError('syncFolderError', '');
-      log(`Selected folder: ${res.folder}`);
-    }
+    const res = await window.appNative.pickFolder(current);
+    if (!res || res.cancelled || !res.folder) return;
+    $('syncFolder').value = res.folder;
+    scheduleAutoSave();
+    showFieldError('syncFolderError', '');
+    log(`Selected folder: ${res.folder}`);
   } catch (err) {
     log(`Browse folder failed: ${err.message}`, 'error');
     alert(`Could not open folder picker: ${err.message}`);
+  }
+}
+
+function disableBrowseIfUnsupported() {
+  const btn = document.getElementById('browseSyncFolderBtn');
+  if (!btn) return;
+  if (!window.appNative || typeof window.appNative.pickFolder !== 'function') {
+    btn.disabled = true;
+    btn.title = 'Folder browse is only available in the desktop app — type the path instead.';
   }
 }
 
@@ -1725,7 +2033,9 @@ async function applyStep5Overrides(overrides) {
 function populateShippingProfileDropdowns(profiles) {
   const overrideSel = $('f_shippingProfileId');
   if (!overrideSel) return;
-  const current = overrideSel.value;
+  // Prefer a pending wizard-restore value over the current select value, since
+  // setting .value before options exist would otherwise read back as empty.
+  const wanted = state.pendingShippingId || overrideSel.value;
   overrideSel.innerHTML = '';
   const blank = document.createElement('option');
   blank.value = '';
@@ -1737,13 +2047,18 @@ function populateShippingProfileDropdowns(profiles) {
     opt.textContent = p.title;
     overrideSel.appendChild(opt);
   }
-  overrideSel.value = current || '';
+  if (wanted && Array.from(overrideSel.options).some((o) => o.value === String(wanted))) {
+    overrideSel.value = String(wanted);
+    state.pendingShippingId = null;
+  } else {
+    overrideSel.value = '';
+  }
 }
 
 function populateReadinessStateDropdowns(states) {
   const overrideSel = $('f_readinessStateId');
   if (!overrideSel) return;
-  const current = overrideSel.value;
+  const wanted = state.pendingReadinessId || overrideSel.value;
   overrideSel.innerHTML = '';
   const blank = document.createElement('option');
   blank.value = '';
@@ -1755,7 +2070,12 @@ function populateReadinessStateDropdowns(states) {
     opt.textContent = s.label;
     overrideSel.appendChild(opt);
   }
-  overrideSel.value = current || '';
+  if (wanted && Array.from(overrideSel.options).some((o) => o.value === String(wanted))) {
+    overrideSel.value = String(wanted);
+    state.pendingReadinessId = null;
+  } else {
+    overrideSel.value = '';
+  }
 }
 
 function populateStep5ReadinessSelect() {
@@ -1946,6 +2266,10 @@ function attachEvents() {
 
   $('generateBtn').addEventListener('click', generateListing);
   $('createEtsyDraftBtn').addEventListener('click', createEtsyDraft);
+  $('resumeUploadBtn').addEventListener('click', resumePartialUpload);
+  $('discardPartialDraftBtn').addEventListener('click', discardPartialDraft);
+  $('openInEtsyBtn').addEventListener('click', openLastListingInEtsy);
+  $('openInEtsyFromPartialBtn').addEventListener('click', openLastListingInEtsy);
   $('themeToggleBtn').addEventListener('click', toggleTheme);
 
   $('copyDescriptionBtn').addEventListener('click', () => copyText($('o_description').value, 'description'));
@@ -1974,6 +2298,16 @@ function attachEvents() {
   $('f_whenMade').addEventListener('change', updateStep5Summary);
   $('f_shippingProfileId').addEventListener('change', updateStep5Summary);
   $('f_readinessStateId').addEventListener('change', updateStep5Summary);
+
+  // Persist wizard state on any intake change so an accidental close can be resumed.
+  for (const id of ['f_type', 'f_price', 'f_quantity', 'f_whenMade', 'f_notes', 'f_shippingProfileId', 'f_readinessStateId']) {
+    const el = $(id);
+    if (!el) continue;
+    el.addEventListener('input', scheduleWizardStateSave);
+    el.addEventListener('change', scheduleWizardStateSave);
+  }
+
+  $('dismissResumeBtn').addEventListener('click', discardResumeAndStartFresh);
 
   window.addEventListener('focus', refreshConfigAndStatus);
 
@@ -2016,6 +2350,7 @@ async function init() {
   applyTheme(getPreferredTheme());
   setConnectionStatus('pending', 'Checking…');
   attachEvents();
+  disableBrowseIfUnsupported();
   setStep(1);
 
   await loadHealth();
@@ -2029,6 +2364,25 @@ async function init() {
     state.generated = savedDraft;
     setGeneratedOutput(savedDraft);
     log('Restored unsaved draft from previous session. Go to Step 4 to review it.');
+  }
+
+  const savedWizard = loadWizardStateFromStorage();
+  if (hasMeaningfulWizardState(savedWizard)) {
+    applyWizardStateToForm(savedWizard);
+    renderSelectedStrip();
+    renderBrowserItems();
+    updateTaxonomyDisplay();
+    updateStep5Summary();
+    showResumeBanner(savedWizard);
+    log(`Restored in-progress listing from ${new Date(savedWizard.savedAt).toLocaleString()}.`);
+  }
+
+  const savedPartial = loadPartialDraftFromStorage();
+  if (savedPartial && savedPartial.listingId && Array.isArray(savedPartial.remaining)) {
+    state.partialDraft = savedPartial;
+    state.lastListingId = String(savedPartial.listingId);
+    renderPartialDraftPanel();
+    log(`Restored partial-draft recovery info for listing #${savedPartial.listingId}. Visit Step 5 to retry.`);
   }
 
   updateTaxonomyDisplay();

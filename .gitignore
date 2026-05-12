@@ -1,7 +1,11 @@
 node_modules/
 data/*.json
+data/*.json.legacy
+data/*.ndjson
 .env
 .DS_Store
 Thumbs.db
 data/thumb-cache/
 dist-electron/
+.claude-handoff.md
+.claude-audit-*.md

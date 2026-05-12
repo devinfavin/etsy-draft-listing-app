@@ -1,11 +1,13 @@
 **What's new in this version**
 
-- **"What's new" popup** — From now on, you'll see a short summary like this one the first time you open the app after each update, so you know what changed.
+- **Pick up where you left off.** If you close the app mid-listing or your computer restarts, the next time you open it your selected photos, item details, and AI-generated listing are all restored. A small banner at the top lets you keep going or click "Start fresh" to clear it out.
 
-- **Bullet specs actually show up in your listings now.** Until this update, the spec list (Brand, Size, Color, etc.) showed in Step 4 but was *not* being attached to the Etsy listing — it just looked like it was. Specs now appear as a clean "Specifications:" block right inside the description, between the AI's writeup and your shipping/policy footer.
+- **Photo upload recovery.** Sometimes a draft gets created on Etsy but not all the photos make it (usually a brief network blip). Before, you had to delete the half-finished draft and redo everything. Now you'll see a yellow recovery box on Step 5 with a "Retry remaining photos" button — one click finishes the job on the existing draft, no re-doing.
 
-- **Photo alt text is sent to Etsy** with each picture you upload. Better accessibility for buyers using screen readers, and a small SEO boost on Etsy's search.
+- **"Open draft in Etsy" button.** After creating a draft, click this to jump straight to that specific listing in your Etsy seller dashboard — no hunting through your listings page.
 
-- **Step 4 is tidier.** A few fields that weren't actually being used (Short blurb, Condition note, the separate Bullet specs editor, Colors) have been removed. The information they captured is now folded directly into the description that gets sent to Etsy.
+- **Snappier Browse button.** Step 1's "Browse" button now opens the system's native folder dialog directly, replacing an older workaround that could take a second or two to appear.
 
-- **AI writes more neutrally.** The AI was leaning hard into "vintage" language for everything regardless of what the photos showed; that bias has been removed.
+- **Stronger protection for your saved Etsy login.** Your Etsy connection tokens are now encrypted on disk using Windows' built-in protection — they only work for your own Windows user account.
+
+- **Behind-the-scenes reliability.** The listings history file is now append-only (faster, doesn't get rewritten on every action). Error messages from Etsy are clearer when something goes wrong. Several small code-quality improvements throughout.
