@@ -1149,6 +1149,11 @@ function envFilePathHint() {
   return path.join(path.dirname(DATA_DIR), '.env');
 }
 
+function hasAnyEtsyConnection() {
+  const all = loadTokens();
+  return Object.values(all).some((t) => t && t.access_token);
+}
+
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
@@ -1156,7 +1161,8 @@ app.get('/api/health', (_req, res) => {
     appVersion: APP_VERSION,
     missingEnvKeys: missingRequiredEnvKeys(),
     dataDir: DATA_DIR,
-    envFile: envFilePathHint()
+    envFile: envFilePathHint(),
+    hasUsedApp: hasAnyEtsyConnection()
   });
 });
 

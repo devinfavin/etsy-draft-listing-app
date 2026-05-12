@@ -146,23 +146,25 @@ The user can also manually trigger a check via **File menu → Check for updates
 
 1. Set your GitHub token as an environment variable (one-time setup per machine):
    ```powershell
-   $env:GH_TOKEN = "ghp_yourtokenhere"
+   [System.Environment]::SetEnvironmentVariable("GH_TOKEN", "github_pat_...", "User")
    ```
-   The token needs `repo` scope (classic PAT) or "Contents: read/write" (fine-grained PAT scoped to this single repo). Generate at https://github.com/settings/tokens.
+   The token needs `repo` scope (classic PAT) or "Contents: read/write" (fine-grained PAT scoped to this single repo). Generate at https://github.com/settings/tokens. **Open a fresh PowerShell window** after running this so it picks up the value.
 
-2. Bump the version, build, and publish in one go:
+2. Edit `release-notes.md` at the project root with **plain-English notes** describing what changed in this version. The user sees this content as a popup the first time they launch the app after the update — so write it for a non-technical reader, not for a git commit log. Overwrite the previous version's notes; only the current release needs to be in this file.
+
+3. Bump the version, build, and publish in one go:
    ```powershell
-   npm version patch       # 0.2.2 → 0.2.3 (or use 'minor' / 'major')
+   npm version patch       # 0.2.5 → 0.2.6 (or use 'minor' / 'major')
    npm run publish:win     # builds the installer AND uploads to GitHub Releases
    ```
-   This creates a new GitHub release with the `.exe` and a `latest.yml` manifest that `electron-updater` reads.
+   This creates a new GitHub release with the `.exe`, the `latest.yml` manifest, and your `release-notes.md` content as the release body.
 
-3. Commit and push the version bump:
+4. Commit and push the version bump + the updated release notes:
    ```powershell
    git push origin main --follow-tags
    ```
 
-That's it. Within a minute or so, every installed copy of the app will see the new release and offer to update.
+That's it. Within a minute or so, every installed copy of the app will see the new release and offer to update; once installed, the user gets the plain-English summary popup on first launch.
 
 ### Manual update (fallback for pre-v0.2.2 installs or air-gapped machines)
 

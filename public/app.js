@@ -20,6 +20,7 @@ const state = {
   autoTaxonomyLabel: null,
   serverOnline: false,
   appVersion: 'dev',
+  hasUsedApp: false,
 };
 
 const STEP_COUNT = 5;
@@ -1071,6 +1072,7 @@ async function loadHealth() {
     const res = await api('/api/health');
     state.serverOnline = true;
     state.appVersion = res.appVersion || 'dev';
+    state.hasUsedApp = Boolean(res.hasUsedApp);
     renderSetupBanner(res);
     initVersionChip();
   } catch (err) {
@@ -1216,9 +1218,16 @@ async function maybeShowReleaseNotes() {
   let lastSeen = null;
   try { lastSeen = localStorage.getItem(LAST_SEEN_VERSION_KEY); } catch {}
 
-  // First-ever launch with this feature — record and skip. We don't want to surface
-  // "what's new" to a user who's never seen this app before.
+  // Three cases when there's no lastSeen marker:
+  //   1. Truly fresh install — don't surprise the user with a "what's new" popup
+  //      for an app they've never opened.
+  //   2. Existing user updating from a pre-popup version — show notes for the
+  //      version they just landed on, because to them this IS a new arrival.
+  // We disambiguate by checking server-side state (any Etsy connection saved).
   if (!lastSeen) {
+    if (state.hasUsedApp) {
+      await fetchAndShowReleaseNotes(current, null);
+    }
     try { localStorage.setItem(LAST_SEEN_VERSION_KEY, current); } catch {}
     return;
   }
@@ -1230,23 +1239,27 @@ async function maybeShowReleaseNotes() {
     return;
   }
 
+  await fetchAndShowReleaseNotes(current, lastSeen);
+}
+
+async function fetchAndShowReleaseNotes(version, previousVersion) {
   try {
-    const resp = await fetch(`https://api.github.com/repos/${RELEASE_NOTES_REPO}/releases/tags/v${encodeURIComponent(current)}`);
+    const resp = await fetch(`https://api.github.com/repos/${RELEASE_NOTES_REPO}/releases/tags/v${encodeURIComponent(version)}`);
     if (!resp.ok) {
-      try { localStorage.setItem(LAST_SEEN_VERSION_KEY, current); } catch {}
+      try { localStorage.setItem(LAST_SEEN_VERSION_KEY, version); } catch {}
       return;
     }
     const data = await resp.json();
     const body = (data.body || '').trim();
     showReleaseNotesModal({
-      version: current,
-      previousVersion: lastSeen,
-      body: body || `(No detailed release notes were published for v${current}.)`,
-      htmlUrl: data.html_url || `https://github.com/${RELEASE_NOTES_REPO}/releases/tag/v${current}`
+      version,
+      previousVersion,
+      body: body || `(No detailed release notes were published for v${version}.)`,
+      htmlUrl: data.html_url || `https://github.com/${RELEASE_NOTES_REPO}/releases/tag/v${version}`
     });
   } catch (err) {
-    log(`Could not fetch release notes for v${current}: ${err.message}`);
-    try { localStorage.setItem(LAST_SEEN_VERSION_KEY, current); } catch {}
+    log(`Could not fetch release notes for v${version}: ${err.message}`);
+    try { localStorage.setItem(LAST_SEEN_VERSION_KEY, version); } catch {}
   }
 }
 
@@ -1262,12 +1275,12 @@ function showReleaseNotesModal({ version, previousVersion, body, htmlUrl }) {
   if (subtitle) {
     subtitle.textContent = previousVersion
       ? `You were on v${previousVersion}. Here's what changed:`
-      : `Here's what changed:`;
+      : `Here's what's new in this version:`;
   }
   bodyEl.textContent = body;
   if (githubBtn) githubBtn.dataset.url = htmlUrl || '';
   overlay.classList.remove('hidden');
-  log(`Showing release notes for v${version} (previously on v${previousVersion}).`);
+  log(`Showing release notes for v${version}${previousVersion ? ` (previously on v${previousVersion})` : ''}.`);
 }
 
 function dismissReleaseNotesModal() {
