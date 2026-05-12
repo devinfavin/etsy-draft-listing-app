@@ -465,27 +465,22 @@ function setGeneratedOutput(out) {
   state.generated = out;
   if (out) saveGeneratedToStorage(out);
   $('o_title').value = out?.title || '';
-  $('o_short_blurb').value = out?.short_blurb || '';
-  $('o_condition_note').value = out?.condition_note || '';
   $('o_description').value = out?.description || '';
-  $('o_bullet_specs').value = Array.isArray(out?.bullet_specs) ? out.bullet_specs.join('\n') : '';
   $('o_tags').value = Array.isArray(out?.tags) ? out.tags.join(', ') : '';
   $('o_materials').value = Array.isArray(out?.etsy_materials) ? out.etsy_materials.join(', ') : '';
-  $('o_colors').value = Array.isArray(out?.etsy_colors) ? out.etsy_colors.join(', ') : '';
   $('o_alt_text').value = Array.isArray(out?.image_alt_text) ? out.image_alt_text.join('\n') : '';
 }
 
 function collectGeneratedOutput() {
   return {
     title: $('o_title').value.trim(),
-    short_blurb: $('o_short_blurb').value.trim(),
-    condition_note: $('o_condition_note').value.trim(),
     description: $('o_description').value.trim(),
-    bullet_specs: $('o_bullet_specs').value.split(/\n+/).map((s) => s.trim()).filter(Boolean),
     tags: $('o_tags').value.split(',').map((s) => s.trim()).filter(Boolean),
     etsy_materials: $('o_materials').value.split(',').map((s) => s.trim()).filter(Boolean),
-    etsy_colors: $('o_colors').value.split(',').map((s) => s.trim()).filter(Boolean),
     image_alt_text: $('o_alt_text').value.split(/\n+/).map((s) => s.trim()).filter(Boolean),
+    // bullet_specs stay in state.generated so they're still in the support log,
+    // but they're already woven into the description so we don't resend them.
+    bullet_specs: Array.isArray(state.generated?.bullet_specs) ? state.generated.bullet_specs : [],
   };
 }
 
@@ -529,11 +524,7 @@ function resetForNewListing() {
   $('o_title').value = '';
   $('o_description').value = '';
   $('o_tags').value = '';
-  $('o_short_blurb').value = '';
-  $('o_condition_note').value = '';
-  $('o_bullet_specs').value = '';
   $('o_materials').value = '';
-  $('o_colors').value = '';
   $('o_alt_text').value = '';
   updateTaxonomyDisplay();
   showTaxonomyDisplay();
@@ -1201,6 +1192,89 @@ function resetChipToIdle() {
   label.textContent = `v${state.appVersion || 'dev'}`;
   btn.title = `v${state.appVersion || 'dev'} — click to check for updates`;
   lastUpdaterStatus = 'idle';
+}
+
+// ─── Release notes (shown on first launch after an update) ──
+const LAST_SEEN_VERSION_KEY = 'etsy_last_seen_version';
+const RELEASE_NOTES_REPO = 'devinfavin/etsy-draft-listing-app';
+
+function compareSemver(a, b) {
+  const pa = String(a || '').split('.').map((n) => Number(n) || 0);
+  const pb = String(b || '').split('.').map((n) => Number(n) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const ai = pa[i] || 0;
+    const bi = pb[i] || 0;
+    if (ai !== bi) return ai < bi ? -1 : 1;
+  }
+  return 0;
+}
+
+async function maybeShowReleaseNotes() {
+  const current = state.appVersion;
+  if (!current || current === 'dev') return;
+
+  let lastSeen = null;
+  try { lastSeen = localStorage.getItem(LAST_SEEN_VERSION_KEY); } catch {}
+
+  // First-ever launch with this feature — record and skip. We don't want to surface
+  // "what's new" to a user who's never seen this app before.
+  if (!lastSeen) {
+    try { localStorage.setItem(LAST_SEEN_VERSION_KEY, current); } catch {}
+    return;
+  }
+
+  if (lastSeen === current) return;
+  if (compareSemver(lastSeen, current) >= 0) {
+    // Downgrade or no-op; just update the marker quietly.
+    try { localStorage.setItem(LAST_SEEN_VERSION_KEY, current); } catch {}
+    return;
+  }
+
+  try {
+    const resp = await fetch(`https://api.github.com/repos/${RELEASE_NOTES_REPO}/releases/tags/v${encodeURIComponent(current)}`);
+    if (!resp.ok) {
+      try { localStorage.setItem(LAST_SEEN_VERSION_KEY, current); } catch {}
+      return;
+    }
+    const data = await resp.json();
+    const body = (data.body || '').trim();
+    showReleaseNotesModal({
+      version: current,
+      previousVersion: lastSeen,
+      body: body || `(No detailed release notes were published for v${current}.)`,
+      htmlUrl: data.html_url || `https://github.com/${RELEASE_NOTES_REPO}/releases/tag/v${current}`
+    });
+  } catch (err) {
+    log(`Could not fetch release notes for v${current}: ${err.message}`);
+    try { localStorage.setItem(LAST_SEEN_VERSION_KEY, current); } catch {}
+  }
+}
+
+function showReleaseNotesModal({ version, previousVersion, body, htmlUrl }) {
+  const overlay = $('releaseNotesOverlay');
+  const title = $('releaseNotesTitle');
+  const subtitle = $('releaseNotesSubtitle');
+  const bodyEl = $('releaseNotesBody');
+  const githubBtn = $('releaseNotesViewOnGithubBtn');
+  if (!overlay || !title || !bodyEl) return;
+
+  title.textContent = `Updated to v${version}`;
+  if (subtitle) {
+    subtitle.textContent = previousVersion
+      ? `You were on v${previousVersion}. Here's what changed:`
+      : `Here's what changed:`;
+  }
+  bodyEl.textContent = body;
+  if (githubBtn) githubBtn.dataset.url = htmlUrl || '';
+  overlay.classList.remove('hidden');
+  log(`Showing release notes for v${version} (previously on v${previousVersion}).`);
+}
+
+function dismissReleaseNotesModal() {
+  const overlay = $('releaseNotesOverlay');
+  if (!overlay) return;
+  overlay.classList.add('hidden');
+  try { localStorage.setItem(LAST_SEEN_VERSION_KEY, state.appVersion || ''); } catch {}
 }
 
 function logUpdaterTransition(s) {
@@ -1889,6 +1963,27 @@ function attachEvents() {
   $('f_readinessStateId').addEventListener('change', updateStep5Summary);
 
   window.addEventListener('focus', refreshConfigAndStatus);
+
+  const releaseClose = $('releaseNotesCloseBtn');
+  const releaseGithub = $('releaseNotesViewOnGithubBtn');
+  const releaseOverlay = $('releaseNotesOverlay');
+  if (releaseClose) releaseClose.addEventListener('click', dismissReleaseNotesModal);
+  if (releaseGithub) {
+    releaseGithub.addEventListener('click', () => {
+      const url = releaseGithub.dataset.url;
+      if (url) window.open(url, '_blank', 'noopener');
+    });
+  }
+  if (releaseOverlay) {
+    releaseOverlay.addEventListener('click', (e) => {
+      if (e.target === releaseOverlay) dismissReleaseNotesModal();
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && releaseOverlay && !releaseOverlay.classList.contains('hidden')) {
+      dismissReleaseNotesModal();
+    }
+  });
 }
 
 async function refreshConfigAndStatus() {
@@ -1925,6 +2020,11 @@ async function init() {
 
   updateTaxonomyDisplay();
   updateStep5Summary();
+
+  // Show release notes if the app version changed since the last launch.
+  maybeShowReleaseNotes().catch((err) => {
+    log(`Release notes check failed: ${err.message}`);
+  });
 }
 
 init().catch((err) => {

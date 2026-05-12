@@ -221,22 +221,11 @@
       <details class="advanced">
         <summary>More generated fields</summary>
         <div class="pad-top">
-          <label class="block">Short blurb
-            <textarea id="o_short_blurb" rows="2"></textarea>
-          </label>
-          <label class="block">Condition note
-            <textarea id="o_condition_note" rows="2"></textarea>
-          </label>
-          <label class="block">Bullet specs (one per line)
-            <textarea id="o_bullet_specs" rows="6"></textarea>
-          </label>
+          <p class="help">Bullet specs are folded into the description automatically. These remaining fields are sent to Etsy as separate metadata.</p>
           <label class="block">Materials (comma separated)
             <input id="o_materials" type="text" />
           </label>
-          <label class="block">Colors (comma separated)
-            <input id="o_colors" type="text" />
-          </label>
-          <label class="block">Image alt text (one per line)
+          <label class="block">Image alt text (one per line, in photo order)
             <textarea id="o_alt_text" rows="6"></textarea>
           </label>
         </div>
@@ -330,6 +319,18 @@
       </details>
     </section>
   </main>
+
+  <div id="releaseNotesOverlay" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="releaseNotesTitle">
+    <div class="modal-panel">
+      <h2 id="releaseNotesTitle">What's new</h2>
+      <p id="releaseNotesSubtitle" class="help"></p>
+      <div id="releaseNotesBody" class="release-notes-body"></div>
+      <div class="row gap wrap nav-row">
+        <button id="releaseNotesViewOnGithubBtn" class="secondary" type="button">View on GitHub</button>
+        <button id="releaseNotesCloseBtn" type="button">Got it</button>
+      </div>
+    </div>
+  </div>
 
   <script src="/app.js"></script>
 </body>

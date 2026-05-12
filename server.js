@@ -597,17 +597,14 @@ function listingOutputSchema() {
   return {
     type: 'object',
     additionalProperties: false,
-    required: ['title', 'short_blurb', 'description', 'condition_note', 'bullet_specs', 'tags', 'image_alt_text', 'etsy_materials', 'etsy_colors'],
+    required: ['title', 'description', 'tags', 'image_alt_text', 'etsy_materials'],
     properties: {
       title: { type: 'string', minLength: 20, maxLength: 140 },
-      short_blurb: { type: 'string', minLength: 12, maxLength: 220 },
       description: { type: 'string', minLength: 80, maxLength: 6000 },
-      condition_note: { type: 'string', minLength: 8, maxLength: 320 },
-      bullet_specs: { type: 'array', minItems: 3, maxItems: 10, items: { type: 'string', minLength: 2, maxLength: 120 } },
+      bullet_specs: { type: 'array', maxItems: 10, items: { type: 'string', minLength: 2, maxLength: 120 } },
       tags: { type: 'array', minItems: 8, maxItems: 13, items: { type: 'string', minLength: 2, maxLength: 20 } },
       image_alt_text: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'string', minLength: 8, maxLength: 180 } },
       etsy_materials: { type: 'array', maxItems: 13, items: { type: 'string', minLength: 2, maxLength: 30 } },
-      etsy_colors: { type: 'array', maxItems: 6, items: { type: 'string', minLength: 2, maxLength: 24 } },
       taxonomy_hint: { type: 'string', maxLength: 80 }
     }
   };
@@ -752,21 +749,21 @@ function stripPolicyLikeParagraphs(description) {
 function normalizeGeneratedListing({ generated, intake, cfg, imageCount }) {
   const titleFallback = normalizeWhitespace(intake?.type) || 'Vintage item';
   const title = cleanTitleForEtsy(generated?.title || titleFallback);
-  const shortBlurb = clampByWordBoundary(normalizeWhitespace(generated?.short_blurb), 220);
-  const conditionNote = clampByWordBoundary(
-    normalizeWhitespace(generated?.condition_note || 'Pre-owned condition. See photos for details.'),
-    320
-  );
 
   const bulletSpecs = normalizeStringArray(generated?.bullet_specs, { maxItems: 10, maxLen: 120 });
 
-  const descriptionCore = stripPolicyLikeParagraphs(generated?.description || '');
-  let description = descriptionCore;
+  let description = stripPolicyLikeParagraphs(generated?.description || '');
   if (!description) {
-    const opening = shortBlurb || clampByWordBoundary(`Pre-owned ${intake?.type || 'item'} ready for resale.`, 160);
-    const specsBlock = bulletSpecs.length ? `Specifications:\n- ${bulletSpecs.join('\n- ')}` : '';
-    const conditionBlock = conditionNote ? `Condition:\n${conditionNote}` : '';
-    description = [opening, specsBlock, conditionBlock].filter(Boolean).join('\n\n').trim();
+    description = clampByWordBoundary(
+      `Pre-owned ${intake?.type || 'item'} ready for resale. See photos for full details.`,
+      280
+    );
+  }
+
+  // Append a structured specifications block (Etsy has no native spec field — this puts
+  // them into the description where buyers will see them).
+  if (bulletSpecs.length) {
+    description = `${description}\n\nSpecifications:\n- ${bulletSpecs.join('\n- ')}`;
   }
 
   const policy = normalizeMultilineText(cfg?.listingPolicyText);
@@ -776,7 +773,6 @@ function normalizeGeneratedListing({ generated, intake, cfg, imageCount }) {
 
   const tags = normalizeTagsForEtsy(generated?.tags, intake);
   const materials = normalizeStringArray(generated?.etsy_materials, { maxItems: 13, maxLen: 30 });
-  const colors = normalizeStringArray(generated?.etsy_colors, { maxItems: 6, maxLen: 24 });
 
   const desiredAltCount = Math.max(1, Math.min(Number(imageCount || 1), 20));
   const altText = normalizeStringArray(generated?.image_alt_text, { maxItems: desiredAltCount, maxLen: 180 });
@@ -787,14 +783,11 @@ function normalizeGeneratedListing({ generated, intake, cfg, imageCount }) {
 
   return {
     title,
-    short_blurb: shortBlurb || clampByWordBoundary(`Pre-owned ${intake?.type || 'item'} listing`, 220),
     description: normalizeMultilineText(description),
-    condition_note: conditionNote,
     bullet_specs: bulletSpecs,
     tags,
     image_alt_text: altText,
-    etsy_materials: materials,
-    etsy_colors: colors
+    etsy_materials: materials
   };
 }
 
@@ -822,14 +815,13 @@ function buildGeneratePrompt({ intake, cfg, selectedImages, includeImages }) {
     '  Paragraph 2: practical use + lifestyle/decor/gift context when supported.',
     '  Paragraph 3: condition/transparency + exactly what is included in the sale.',
     '- Keep all 3 paragraphs concise and readable.',
-    '- bullet_specs array: concrete observable attributes (material, color, capacity, pattern, dimensions if visibly inferable, markings).',
-    '- condition_note: concise factual sentence describing condition based on the photos and any seller-noted flaws.',
+    '- bullet_specs array: structured key attributes that complement the narrative. Will be appended to the description as a "Specifications:" bullet list, so format as label:value pairs (e.g. "Brand: AND1", "Size: Mens Medium", "Material: Polyester"). Include only what is clearly observable. Omit entirely (empty array) for items with no meaningful structured specs (e.g. abstract art, one-off curiosities).',
     '- Tags: provide 13 SEO-friendly Etsy tag phrases, each <= 20 characters, no duplicates.',
     '- taxonomy_hint: the core product-type noun only — what the item IS, not what it is made of or flavored with. Examples: "mug", "planter", "brooch", "serving bowl", "throw pillow". One or two words max. No materials, colors, or brand modifiers.',
     '- Keep text natural, warm, and readable for buyers without hype.',
     '- If quantity is more than 1, clearly call out the set size in title and description.',
     includeImages
-      ? '- Photos are the primary source of visual facts. Reflect what you see; flag visible wear in condition_note.'
+      ? '- Photos are the primary source of visual facts. Reflect what you see; describe any visible wear, fading, or damage in paragraph 3 of the description.'
       : '- Images are not available in this run, so rely only on the seller intake.',
     '',
     'Seller intake:',
@@ -1130,13 +1122,15 @@ function extractEtsyListingId(createResp) {
   );
 }
 
-async function uploadEtsyListingImage({ shopId, listingId, fullImagePath, rank, storeKey }) {
+async function uploadEtsyListingImage({ shopId, listingId, fullImagePath, rank, altText, storeKey }) {
   const form = new FormData();
   const buf = await fsp.readFile(fullImagePath);
   const mime = guessMime(fullImagePath);
   const filename = path.basename(fullImagePath);
   form.append('image', new Blob([buf], { type: mime }), filename);
   if (Number.isFinite(rank)) form.append('rank', String(rank));
+  const trimmedAlt = altText ? String(altText).trim() : '';
+  if (trimmedAlt) form.append('alt_text', trimmedAlt.slice(0, 250));
 
   return etsyApiFetch(`https://api.etsy.com/v3/application/shops/${shopId}/listings/${listingId}/images`, {
     method: 'POST',
@@ -1828,14 +1822,17 @@ app.post('/api/etsy/create-draft', async (req, res) => {
     }
 
     const uploadResults = [];
+    const altTexts = Array.isArray(generated?.image_alt_text) ? generated.image_alt_text : [];
     let rank = 1;
     for (const relPath of selectedImages) {
       const full = safeResolveUnder(root, relPath);
+      const altText = altTexts[rank - 1] || null;
       const resp = await uploadEtsyListingImage({
         shopId,
         listingId,
         fullImagePath: full,
         rank,
+        altText,
         storeKey: activeStore.key
       });
       uploadResults.push({ relPath, rank, response: resp });
