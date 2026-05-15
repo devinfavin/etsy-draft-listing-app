@@ -307,6 +307,56 @@ p { margin: 6px 0; color: var(--muted); line-height: 1.55; }
   50% { box-shadow: 0 0 0 8px rgba(130, 176, 140, 0); }
 }
 
+/* Hidden easter egg flag: pops out below the version chip after 7 rapid clicks. */
+.mama-flag {
+  position: fixed;
+  transform: translate(-50%, 0);
+  pointer-events: none;
+  z-index: 9999;
+  padding: 8px 14px;
+  background: linear-gradient(135deg, #ff7ba0, #ff4b6b);
+  color: #fff;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border-radius: 8px;
+  box-shadow: 0 8px 22px rgba(255, 75, 107, 0.40);
+  white-space: nowrap;
+  opacity: 0;
+}
+
+.mama-flag.hidden {
+  display: none;
+}
+
+.mama-flag::before {
+  content: '';
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  margin-left: -6px;
+  width: 12px;
+  height: 12px;
+  background: #ff7ba0;
+  border-radius: 2px;
+  transform: rotate(45deg);
+}
+
+.mama-flag.mama-flag-show {
+  animation: mama-flag-pop 3200ms ease-out forwards;
+}
+
+@keyframes mama-flag-pop {
+  0%   { opacity: 0; transform: translate(-50%, -14px) scale(0.55); }
+  12%  { opacity: 1; transform: translate(-50%, 6px)   scale(1.10); }
+  22%  {              transform: translate(-50%, 0)     scale(1.00); }
+  35%  {              transform: translate(-50%, 0)     scale(1.00) rotate(-1.5deg); }
+  50%  {              transform: translate(-50%, 0)     scale(1.00) rotate(1.5deg); }
+  65%  {              transform: translate(-50%, 0)     scale(1.00) rotate(0deg); }
+  85%  { opacity: 1;  transform: translate(-50%, 0)     scale(1.00); }
+  100% { opacity: 0;  transform: translate(-50%, -6px)  scale(0.95); }
+}
+
 .connection-pill-wrap {
   position: relative;
   display: inline-flex;

@@ -737,9 +737,15 @@ function clampByWordBoundary(text, maxLen) {
   return clipped.trim();
 }
 
+// Replace em-dash (\u2014), en-dash (\u2013), and minus (\u2212) with a plain hyphen so
+// they never reach Etsy or the rendered description. We don't want fancy
+// dashes anywhere in generated listing content.
+function replaceFancyDashes(text) {
+  return String(text || '').replace(/[\u2013\u2014\u2212]/g, '-');
+}
+
 function cleanTitleForEtsy(rawTitle) {
-  const normalized = normalizeWhitespace(rawTitle)
-    .replace(/[\u2013\u2014]/g, '-')
+  const normalized = replaceFancyDashes(normalizeWhitespace(rawTitle))
     .replace(/\s*[-|,:;/]+\s*$/g, '')
     .trim();
   if (!normalized) return '';
@@ -757,11 +763,23 @@ function normalizeTagForEtsy(rawTag) {
   return clampByWordBoundary(normalized, 20);
 }
 
+// Etsy's materials field rejects anything outside [A-Za-z0-9 ] \u2014 slashes,
+// percent signs, hyphens, apostrophes, em-dashes, etc. all trigger
+// "invalid_characters". Strip aggressively to alphanumerics + spaces.
+function normalizeMaterialForEtsy(rawMaterial) {
+  const stripped = replaceFancyDashes(normalizeWhitespace(rawMaterial))
+    .replace(/[^A-Za-z0-9 ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!stripped) return '';
+  return clampByWordBoundary(stripped, 45);
+}
+
 function normalizeStringArray(items, { maxItems = 50, maxLen = 120, lowerCase = false } = {}) {
   const out = [];
   const seen = new Set();
   for (const raw of Array.isArray(items) ? items : []) {
-    let text = normalizeWhitespace(raw);
+    let text = replaceFancyDashes(normalizeWhitespace(raw));
     if (!text) continue;
     text = clampByWordBoundary(text, maxLen);
     if (lowerCase) text = text.toLowerCase();
@@ -839,7 +857,7 @@ function normalizeGeneratedListing({ generated, intake, cfg, imageCount }) {
 
   const bulletSpecs = normalizeStringArray(generated?.bullet_specs, { maxItems: 10, maxLen: 120 });
 
-  let description = stripPolicyLikeParagraphs(generated?.description || '');
+  let description = stripPolicyLikeParagraphs(replaceFancyDashes(generated?.description || ''));
   if (!description) {
     description = clampByWordBoundary(
       `Pre-owned ${intake?.type || 'item'} ready for resale. See photos for full details.`,
@@ -859,7 +877,19 @@ function normalizeGeneratedListing({ generated, intake, cfg, imageCount }) {
   }
 
   const tags = normalizeTagsForEtsy(generated?.tags, intake);
-  const materials = normalizeStringArray(generated?.etsy_materials, { maxItems: 13, maxLen: 30 });
+  // Materials must pass Etsy's [A-Za-z0-9 ] validation. Run each through the
+  // strict sanitizer, then dedupe + cap to 13.
+  const materialsSeen = new Set();
+  const materials = [];
+  for (const raw of Array.isArray(generated?.etsy_materials) ? generated.etsy_materials : []) {
+    const cleaned = normalizeMaterialForEtsy(raw);
+    if (!cleaned) continue;
+    const key = cleaned.toLowerCase();
+    if (materialsSeen.has(key)) continue;
+    materialsSeen.add(key);
+    materials.push(cleaned);
+    if (materials.length >= 13) break;
+  }
 
   const desiredAltCount = Math.max(1, Math.min(Number(imageCount || 1), 20));
   const altText = normalizeStringArray(generated?.image_alt_text, { maxItems: desiredAltCount, maxLen: 180 });
@@ -896,6 +926,10 @@ function buildGeneratePrompt({ intake, cfg, selectedImages, includeImages }) {
     '- Do not exaggerate condition or make unsupported claims.',
     '',
     'Output requirements:',
+    '- Punctuation rules (apply to title, description, bullet_specs, image_alt_text, and tags):',
+    '  - Do NOT use em-dashes (—) or en-dashes (–) anywhere. Use plain ASCII hyphens (-), commas, or periods instead.',
+    '  - Do NOT use smart/curly quotes (‘’“”). Use straight quotes if quoting is needed.',
+    '- etsy_materials: each entry must contain ONLY plain English letters, digits, and spaces. NO slashes, percent signs, hyphens, apostrophes, ampersands, parentheses, accents, em-dashes, or other punctuation. Example: write "100 Percent Cotton" not "100% Cotton"; "Cotton Polyester Blend" not "Cotton/Polyester"; "Button Down Fabric" not "Button-Down Fabric". Max 45 characters per entry.',
     '- Title: 90-130 characters preferred, hard max 140, keyword-first, clear and factual.',
     '- Description structure (in one field):',
     '  Paragraph 1: engaging hook + what the item is + standout visual details from the photos.',

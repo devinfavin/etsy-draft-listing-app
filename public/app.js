@@ -1249,6 +1249,10 @@ function initVersionChip() {
 }
 
 async function onVersionChipClick() {
+  // Count every click for the hidden flag, even when the update-check
+  // short-circuits below.
+  maybeTriggerMamaFlag();
+
   const btn = $('appVersionBtn');
   if (!window.appUpdater) return;
   if (btn.classList.contains('ready')) {
@@ -1259,6 +1263,52 @@ async function onVersionChipClick() {
     return; // already in progress
   }
   await window.appUpdater.check();
+}
+
+// ─── Hidden easter egg: 7 rapid clicks on the version chip ────────
+const MAMA_FLAG_CLICK_COUNT = 7;
+const MAMA_FLAG_WINDOW_MS = 3000;
+const mamaFlagClicks = [];
+let mamaFlagHideTimer = null;
+
+function maybeTriggerMamaFlag() {
+  const now = Date.now();
+  mamaFlagClicks.push(now);
+  while (mamaFlagClicks.length && now - mamaFlagClicks[0] > MAMA_FLAG_WINDOW_MS) {
+    mamaFlagClicks.shift();
+  }
+  if (mamaFlagClicks.length >= MAMA_FLAG_CLICK_COUNT) {
+    mamaFlagClicks.length = 0;
+    showMamaFlag();
+  }
+}
+
+function showMamaFlag() {
+  const btn = $('appVersionBtn');
+  if (!btn) return;
+  let flag = document.getElementById('mamaFlag');
+  if (!flag) {
+    flag = document.createElement('div');
+    flag.id = 'mamaFlag';
+    flag.className = 'mama-flag hidden';
+    flag.setAttribute('aria-hidden', 'true');
+    flag.textContent = '♥ I love you mama ♥';
+    document.body.appendChild(flag);
+  }
+  const rect = btn.getBoundingClientRect();
+  flag.style.left = `${rect.left + rect.width / 2}px`;
+  flag.style.top = `${rect.bottom + 10}px`;
+  flag.classList.remove('hidden');
+  // Restart the CSS animation by removing then re-adding the class on the
+  // next frame.
+  flag.classList.remove('mama-flag-show');
+  void flag.offsetWidth;
+  flag.classList.add('mama-flag-show');
+  if (mamaFlagHideTimer) clearTimeout(mamaFlagHideTimer);
+  mamaFlagHideTimer = setTimeout(() => {
+    flag.classList.remove('mama-flag-show');
+    flag.classList.add('hidden');
+  }, 3200);
 }
 
 function handleUpdaterState(stateObj) {
