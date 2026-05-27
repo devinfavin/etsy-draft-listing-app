@@ -92,6 +92,14 @@ function defaultStoreForIndex(index) {
   };
 }
 
+// Per-store accent color used for theming. Only accept a #rrggbb hex so the
+// value can be dropped straight into CSS; anything else falls back to '' (the
+// app's default green theme).
+function normalizeAccentColor(raw) {
+  const hex = String(raw || '').trim();
+  return /^#[0-9a-fA-F]{6}$/.test(hex) ? hex.toLowerCase() : '';
+}
+
 function normalizeStoreEntry(rawStore, index, legacyEtsy = null) {
   const fallback = defaultStoreForIndex(index);
   const source = rawStore && typeof rawStore === 'object' ? rawStore : {};
@@ -103,6 +111,7 @@ function normalizeStoreEntry(rawStore, index, legacyEtsy = null) {
     key: String(source.key || fallback.key),
     label: String(source.label || fallback.label).trim() || fallback.label,
     shopId: String(source.shopId || legacyShopId || '').trim(),
+    accentColor: normalizeAccentColor(source.accentColor),
     lastFolder: String(source.lastFolder || '').trim(),
     defaults: {
       ...fallback.defaults,

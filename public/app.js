@@ -45,6 +45,45 @@ const THEME_ICON_DARK = '\u263d';
 const MAX_AI_IMAGE_COUNT = 10;
 const DEFAULT_STORE_KEYS = ['store_1', 'store_2'];
 
+// Preset accent colors offered per store. Mid-tone hues that stay legible in
+// both light and dark themes. The empty value is the app's default green.
+const STORE_ACCENT_PRESETS = [
+  { value: '', label: 'Default green' },
+  { value: '#2f6f9f', label: 'Blue' },
+  { value: '#2b8a8a', label: 'Teal' },
+  { value: '#7a52a8', label: 'Purple' },
+  { value: '#a83d6e', label: 'Magenta' },
+  { value: '#b0603a', label: 'Terracotta' },
+  { value: '#b08a2a', label: 'Mustard' },
+  { value: '#4a5d7a', label: 'Slate' },
+];
+
+function normalizeAccentColor(raw) {
+  const hex = String(raw || '').trim();
+  return /^#[0-9a-fA-F]{6}$/.test(hex) ? hex.toLowerCase() : '';
+}
+
+// Paint the whole UI in the active store's accent color by overriding the
+// shared CSS custom properties. Derived tints use color-mix so they track the
+// light/dark theme automatically. Clearing (no color) falls back to the
+// stylesheet defaults.
+function applyStoreTheme(store) {
+  const hex = normalizeAccentColor(store?.accentColor);
+  const body = document.body;
+  const overrides = {
+    '--accent': hex,
+    '--accent-2': hex ? `color-mix(in srgb, ${hex}, #ffffff 24%)` : '',
+    '--accent-soft': hex ? `color-mix(in srgb, ${hex} 12%, var(--panel))` : '',
+    '--focus-ring': hex ? `color-mix(in srgb, ${hex} 28%, transparent)` : '',
+    '--button-hover': hex ? `color-mix(in srgb, ${hex}, #000000 18%)` : '',
+    '--advanced-summary': hex,
+  };
+  for (const [prop, val] of Object.entries(overrides)) {
+    if (val) body.style.setProperty(prop, val);
+    else body.style.removeProperty(prop);
+  }
+}
+
 function getPreferredTheme() {
   try {
     const saved = localStorage.getItem(THEME_STORAGE_KEY);
@@ -300,6 +339,7 @@ function getDefaultStoreTemplate(index) {
     key: DEFAULT_STORE_KEYS[index] || `store_${index + 1}`,
     label: `Store ${index + 1}`,
     shopId: '',
+    accentColor: '',
     lastFolder: '',
     defaults: {
       quantity: 1,
@@ -327,6 +367,7 @@ function normalizeClientConfig(cfg = {}) {
       key: String(incoming.key || key),
       label: String(incoming.label || fallback.label || '').trim() || fallback.label,
       shopId: String(useLegacy ? (incoming.shopId || legacyShopId) : (incoming.shopId || '')).trim(),
+      accentColor: normalizeAccentColor(incoming.accentColor),
       lastFolder: String(incoming.lastFolder || '').trim(),
       defaults: {
         ...fallback.defaults,
@@ -388,6 +429,9 @@ function loadActiveStoreIntoForm() {
   populateReadinessStateDropdowns(state.readinessStates);
   populateShippingProfileDropdowns(state.shippingProfiles);
   updateShopSummary();
+  applyStoreTheme(store);
+  renderActiveStoreBanner();
+  renderStoreColorSwatches();
 }
 
 function persistActiveStoreFormIntoStateConfig() {
@@ -679,6 +723,12 @@ function updateStep5Summary() {
   $('summaryTitle').textContent = title || '-';
   const store = getActiveStore();
   $('summaryStore').textContent = store?.label || '-';
+  const summaryStoreId = $('summaryStoreId');
+  if (summaryStoreId) {
+    const shopId = store?.shopId || '';
+    summaryStoreId.textContent = shopId ? `Shop ID ${shopId}` : 'Not connected';
+  }
+  setCreateDraftButtonLabel();
 
   const eraEl = $('summaryEra');
   if (eraEl) {
@@ -710,6 +760,18 @@ function updateStep5Summary() {
       catRow.classList.add('hidden');
     }
   }
+}
+
+// The create button names its destination so the shop is part of the action,
+// not a field the user has to remember to check.
+function createDraftButtonLabel() {
+  const label = getActiveStore()?.label;
+  return label ? `Create draft in ${label} (Unpublished)` : 'Create Etsy Draft (Unpublished)';
+}
+
+function setCreateDraftButtonLabel() {
+  const btn = $('createEtsyDraftBtn');
+  if (btn && !btn.disabled) btn.textContent = createDraftButtonLabel();
 }
 
 function humanizeEnum(value) {
@@ -836,6 +898,57 @@ function updateShopSummary() {
       ? `Active store: ${label}`
       : `Active store: ${label} — connect Etsy from the top corner to finish setup.`;
   }
+}
+
+// The always-visible "Posting to <store>" banner. Lives below the topbar on
+// every step so the destination shop can never be mistaken.
+function renderActiveStoreBanner() {
+  const store = getActiveStore();
+  const nameEl = $('activeStoreBannerName');
+  const idEl = $('activeStoreBannerId');
+  if (!nameEl) return;
+  nameEl.textContent = store?.label || 'No store selected';
+  if (idEl) {
+    const shopId = store?.shopId || '';
+    idEl.textContent = shopId ? `Shop ID ${shopId}` : 'Not connected';
+    idEl.classList.toggle('asb-id-warn', !shopId);
+  }
+}
+
+// Render the per-store accent swatches on Step 1 and wire selection.
+function renderStoreColorSwatches() {
+  const wrap = $('storeColorSwatches');
+  if (!wrap) return;
+  const current = normalizeAccentColor(getActiveStore()?.accentColor);
+  wrap.innerHTML = '';
+  for (const preset of STORE_ACCENT_PRESETS) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'store-swatch';
+    const isActive = normalizeAccentColor(preset.value) === current;
+    btn.classList.toggle('active', isActive);
+    btn.setAttribute('aria-pressed', String(isActive));
+    btn.title = preset.label;
+    btn.setAttribute('aria-label', `Store color: ${preset.label}`);
+    // The empty/default value shows the app's base green so it reads as a real swatch.
+    btn.style.setProperty('--swatch-color', preset.value || '#3d6e48');
+    btn.addEventListener('click', () => setActiveStoreAccent(preset.value));
+    wrap.appendChild(btn);
+  }
+}
+
+function setActiveStoreAccent(color) {
+  if (!state.config) return;
+  const normalized = normalizeAccentColor(color);
+  const activeKey = getActiveStoreKey();
+  const cfg = normalizeClientConfig(state.config);
+  cfg.etsy.stores = cfg.etsy.stores.map((s) =>
+    s.key === activeKey ? { ...s, accentColor: normalized } : s
+  );
+  state.config = cfg;
+  applyStoreTheme(getActiveStore());
+  renderStoreColorSwatches();
+  autoSaveConfig().catch(() => {});
 }
 
 function validateStep2() {
@@ -1692,7 +1805,7 @@ async function createEtsyDraft() {
   } finally {
     const draftBtn = $('createEtsyDraftBtn');
     draftBtn.disabled = false;
-    draftBtn.textContent = 'Create Etsy Draft (Unpublished)';
+    draftBtn.textContent = createDraftButtonLabel();
   }
 }
 
@@ -2270,8 +2383,19 @@ function attachEvents() {
     }
   });
 
-  $('activeStoreSelect').addEventListener('change', () => {
+  $('activeStoreSelect').addEventListener('change', (e) => {
     if (!state.config) return;
+    const select = e.target;
+    const newKey = select.value;
+    const prevKey = state.config.etsy?.activeStoreKey;
+    if (newKey !== prevKey) {
+      const target = getStoreByKey(newKey);
+      const targetLabel = target?.label || 'this store';
+      if (!confirm(`Switch active store to ${targetLabel}?\n\nAll drafts will be created in ${targetLabel} until you switch back.`)) {
+        select.value = prevKey; // revert the dropdown
+        return;
+      }
+    }
     persistActiveStoreFormIntoStateConfig();
     state.config.etsy.activeStoreKey = getActiveStoreKey();
     state.currentRelDir = getActiveStore()?.lastFolder || '';

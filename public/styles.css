@@ -31,6 +31,7 @@
   --space-6: 52px;
 
   --topbar-h: 72px;
+  --store-banner-h: 54px;
   --input-h: 52px;
   --btn-h: 54px;
 
@@ -511,10 +512,124 @@ p { margin: 6px 0; color: var(--muted); line-height: 1.55; }
   box-shadow: var(--shadow);
 }
 
+/* ─── Active-store banner (sticky, below topbar, above progress) ── */
+.active-store-banner {
+  position: sticky;
+  top: var(--topbar-h);
+  z-index: 150;
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px var(--space-2);
+  min-height: var(--store-banner-h);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--accent);
+  border-left: 6px solid var(--accent);
+  background: var(--accent-soft);
+  box-shadow: var(--shadow-sm);
+}
+
+.active-store-banner .asb-label {
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}
+
+.active-store-banner .asb-name {
+  font-size: 1.35rem;
+  font-weight: 800;
+  line-height: 1.1;
+  color: var(--accent);
+}
+
+.active-store-banner .asb-id {
+  margin-left: auto;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.active-store-banner .asb-id.asb-id-warn {
+  color: var(--warning-border);
+}
+
+/* ─── Store appearance (color picker, Step 1) ───────────── */
+.store-appearance {
+  margin-bottom: var(--space-3);
+}
+
+.store-color-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.store-swatch {
+  width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  background: var(--swatch-color, #3d6e48);
+  cursor: pointer;
+  box-shadow: none;
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+}
+
+.store-swatch:hover:not(:disabled) {
+  transform: scale(1.08);
+  box-shadow: var(--shadow-sm);
+}
+
+.store-swatch.active {
+  border-color: var(--text);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+/* ─── Step 5 prominent store header ──────────────────────── */
+.summary-store-header {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-2);
+  border-radius: var(--radius-md);
+  border-left: 6px solid var(--accent);
+  background: var(--accent-soft);
+}
+
+.summary-store-label {
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  width: 100%;
+}
+
+.summary-store-name {
+  font-size: 1.5rem;
+  font-weight: 800;
+  line-height: 1.1;
+  color: var(--accent);
+}
+
+.summary-store-id {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
 /* ─── Wizard progress (sticky below topbar) ──────────────── */
 .wizard-progress {
   position: sticky;
-  top: var(--topbar-h);
+  top: calc(var(--topbar-h) + var(--store-banner-h) + var(--space-3));
   z-index: 100;
   padding: var(--space-2) 40px var(--space-3);
   display: grid;

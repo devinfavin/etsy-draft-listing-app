@@ -43,6 +43,11 @@
   </header>
 
   <main class="layout">
+    <div id="activeStoreBanner" class="active-store-banner" role="status" aria-live="polite">
+      <span class="asb-label">Posting to</span>
+      <span id="activeStoreBannerName" class="asb-name">—</span>
+      <span id="activeStoreBannerId" class="asb-id"></span>
+    </div>
     <div id="setupBanner" class="setup-banner hidden" role="alert">
       <strong>Setup needed:</strong>
       <span id="setupBannerMessage"></span>
@@ -64,6 +69,11 @@
       <h2>Step 1: Setup</h2>
       <p class="help">These settings save automatically as you change them.</p>
       <p id="activeStoreSummary" class="help"></p>
+      <div class="store-appearance">
+        <span class="field-label">Store color</span>
+        <p class="help">A distinct color for this store, shown across the whole app so you always know which shop you're working in.</p>
+        <div id="storeColorSwatches" class="store-color-swatches" role="group" aria-label="Store accent color"></div>
+      </div>
       <div class="grid one">
         <label><span class="field-label">Photo folder</span>
           <div class="field-with-button">
@@ -246,9 +256,13 @@
     <section id="step5" class="panel step-panel hidden">
       <h2>Step 5: Create Etsy draft</h2>
       <p class="help">This creates an unpublished draft in Etsy and uploads your selected photos.</p>
+      <div class="summary-store-header">
+        <span class="summary-store-label">Creating this draft in</span>
+        <span id="summaryStore" class="summary-store-name">-</span>
+        <span id="summaryStoreId" class="summary-store-id"></span>
+      </div>
       <div class="summary-box">
         <div><strong>Title:</strong> <span id="summaryTitle">-</span></div>
-        <div><strong>Store:</strong> <span id="summaryStore">-</span></div>
         <div><strong>Photos selected:</strong> <span id="summaryPhotoCount">0</span></div>
         <div><strong>Price:</strong> <span id="summaryPrice">-</span></div>
         <div><strong>Era:</strong> <span id="summaryEra">-</span></div>
