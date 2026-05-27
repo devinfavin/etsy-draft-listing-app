@@ -45,10 +45,17 @@ const THEME_ICON_DARK = '\u263d';
 const MAX_AI_IMAGE_COUNT = 10;
 const DEFAULT_STORE_KEYS = ['store_1', 'store_2'];
 
-// Preset accent colors offered per store. Mid-tone hues that stay legible in
-// both light and dark themes. The empty value is the app's default green.
+// Default per-store identity colors, assigned by store position so the two
+// stores look distinct with zero setup. Green (the app's brand) and terracotta
+// are an Okabe-Ito-style pair chosen to stay distinguishable under the common
+// red-green color-vision deficiencies — color only ever reinforces the shop
+// *name*, which is the real identity signal.
+const DEFAULT_STORE_ACCENTS = ['#3d6e48', '#b0603a'];
+
+// Optional manual overrides offered on Step 1. "Automatic" keeps the position
+// default; the rest are mid-tone hues legible in both light and dark themes.
 const STORE_ACCENT_PRESETS = [
-  { value: '', label: 'Default green' },
+  { value: '', label: 'Automatic' },
   { value: '#2f6f9f', label: 'Blue' },
   { value: '#2b8a8a', label: 'Teal' },
   { value: '#7a52a8', label: 'Purple' },
@@ -63,25 +70,30 @@ function normalizeAccentColor(raw) {
   return /^#[0-9a-fA-F]{6}$/.test(hex) ? hex.toLowerCase() : '';
 }
 
-// Paint the whole UI in the active store's accent color by overriding the
-// shared CSS custom properties. Derived tints use color-mix so they track the
-// light/dark theme automatically. Clearing (no color) falls back to the
-// stylesheet defaults.
-function applyStoreTheme(store) {
-  const hex = normalizeAccentColor(store?.accentColor);
+function storeIndexByKey(key) {
+  const cfg = normalizeClientConfig(state.config || {});
+  const i = cfg.etsy.stores.findIndex((s) => s.key === key);
+  return i >= 0 ? i : 0;
+}
+
+// The color actually shown for a store: the manual override if set, otherwise
+// the position default so differentiation works out of the box.
+function effectiveStoreColor(store) {
+  const override = normalizeAccentColor(store?.accentColor);
+  if (override) return override;
+  const idx = storeIndexByKey(store?.key);
+  return DEFAULT_STORE_ACCENTS[idx % DEFAULT_STORE_ACCENTS.length];
+}
+
+// Set the store identity color as scoped CSS vars used only by the store
+// banner, the Step 5 header, and the swatches — the rest of the UI keeps the
+// brand accent so the store color stays a distinct, recognizable signal rather
+// than blending into every button.
+function applyStoreColor(store) {
+  const hex = effectiveStoreColor(store);
   const body = document.body;
-  const overrides = {
-    '--accent': hex,
-    '--accent-2': hex ? `color-mix(in srgb, ${hex}, #ffffff 24%)` : '',
-    '--accent-soft': hex ? `color-mix(in srgb, ${hex} 12%, var(--panel))` : '',
-    '--focus-ring': hex ? `color-mix(in srgb, ${hex} 28%, transparent)` : '',
-    '--button-hover': hex ? `color-mix(in srgb, ${hex}, #000000 18%)` : '',
-    '--advanced-summary': hex,
-  };
-  for (const [prop, val] of Object.entries(overrides)) {
-    if (val) body.style.setProperty(prop, val);
-    else body.style.removeProperty(prop);
-  }
+  body.style.setProperty('--store-color', hex);
+  body.style.setProperty('--store-color-soft', `color-mix(in srgb, ${hex} 12%, var(--panel))`);
 }
 
 function getPreferredTheme() {
@@ -429,7 +441,7 @@ function loadActiveStoreIntoForm() {
   populateReadinessStateDropdowns(state.readinessStates);
   populateShippingProfileDropdowns(state.shippingProfiles);
   updateShopSummary();
-  applyStoreTheme(store);
+  applyStoreColor(store);
   renderActiveStoreBanner();
   renderStoreColorSwatches();
 }
@@ -919,19 +931,23 @@ function renderActiveStoreBanner() {
 function renderStoreColorSwatches() {
   const wrap = $('storeColorSwatches');
   if (!wrap) return;
-  const current = normalizeAccentColor(getActiveStore()?.accentColor);
+  const store = getActiveStore();
+  const current = normalizeAccentColor(store?.accentColor); // '' means Automatic
+  const autoColor = DEFAULT_STORE_ACCENTS[storeIndexByKey(store?.key) % DEFAULT_STORE_ACCENTS.length];
   wrap.innerHTML = '';
   for (const preset of STORE_ACCENT_PRESETS) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'store-swatch';
+    const isAuto = preset.value === '';
     const isActive = normalizeAccentColor(preset.value) === current;
     btn.classList.toggle('active', isActive);
     btn.setAttribute('aria-pressed', String(isActive));
-    btn.title = preset.label;
-    btn.setAttribute('aria-label', `Store color: ${preset.label}`);
-    // The empty/default value shows the app's base green so it reads as a real swatch.
-    btn.style.setProperty('--swatch-color', preset.value || '#3d6e48');
+    const label = isAuto ? `Automatic (this store's default)` : preset.label;
+    btn.title = label;
+    btn.setAttribute('aria-label', `Store color: ${label}`);
+    // "Automatic" shows the store's position default so it reads as a real swatch.
+    btn.style.setProperty('--swatch-color', preset.value || autoColor);
     btn.addEventListener('click', () => setActiveStoreAccent(preset.value));
     wrap.appendChild(btn);
   }
@@ -946,7 +962,8 @@ function setActiveStoreAccent(color) {
     s.key === activeKey ? { ...s, accentColor: normalized } : s
   );
   state.config = cfg;
-  applyStoreTheme(getActiveStore());
+  applyStoreColor(getActiveStore());
+  renderActiveStoreBanner();
   renderStoreColorSwatches();
   autoSaveConfig().catch(() => {});
 }
@@ -1757,7 +1774,31 @@ async function generateListing() {
   }
 }
 
+// The point of no return. Before creating the draft, make the user actively
+// acknowledge the destination shop by name + ID in an in-app modal — the one
+// moment a wrong-shop draft actually gets committed.
+function requestCreateDraftConfirmation() {
+  const overlay = $('createConfirmOverlay');
+  if (!overlay) { createEtsyDraft(); return; } // graceful fallback
+  const store = getActiveStore();
+  const nameEl = $('createConfirmStoreName');
+  const idEl = $('createConfirmStoreId');
+  if (nameEl) nameEl.textContent = store?.label || 'the selected store';
+  if (idEl) {
+    const shopId = store?.shopId || '';
+    idEl.textContent = shopId ? `Etsy shop ID ${shopId}` : 'Not connected to Etsy';
+    idEl.classList.toggle('asb-id-warn', !shopId);
+  }
+  overlay.style.setProperty('--store-color', effectiveStoreColor(store));
+  overlay.classList.remove('hidden');
+}
+
+function dismissCreateConfirm() {
+  $('createConfirmOverlay')?.classList.add('hidden');
+}
+
 async function createEtsyDraft() {
+  dismissCreateConfirm();
   try {
     const generated = collectGeneratedOutput();
     if (!generated.title || !generated.description) {
@@ -2383,19 +2424,11 @@ function attachEvents() {
     }
   });
 
-  $('activeStoreSelect').addEventListener('change', (e) => {
+  $('activeStoreSelect').addEventListener('change', () => {
     if (!state.config) return;
-    const select = e.target;
-    const newKey = select.value;
-    const prevKey = state.config.etsy?.activeStoreKey;
-    if (newKey !== prevKey) {
-      const target = getStoreByKey(newKey);
-      const targetLabel = target?.label || 'this store';
-      if (!confirm(`Switch active store to ${targetLabel}?\n\nAll drafts will be created in ${targetLabel} until you switch back.`)) {
-        select.value = prevKey; // revert the dropdown
-        return;
-      }
-    }
+    // Switching is a lightweight, reversible action on Step 1 (before any work
+    // is done). The real wrong-shop guard is the persistent banner plus the
+    // confirm-at-create step — no need for a blocking dialog here.
     persistActiveStoreFormIntoStateConfig();
     state.config.etsy.activeStoreKey = getActiveStoreKey();
     state.currentRelDir = getActiveStore()?.lastFolder || '';
@@ -2439,7 +2472,12 @@ function attachEvents() {
   $('selectedStrip').addEventListener('drop', handleSelectedStripDrop);
 
   $('generateBtn').addEventListener('click', generateListing);
-  $('createEtsyDraftBtn').addEventListener('click', createEtsyDraft);
+  $('createEtsyDraftBtn').addEventListener('click', requestCreateDraftConfirmation);
+  $('createConfirmCancelBtn')?.addEventListener('click', dismissCreateConfirm);
+  $('createConfirmProceedBtn')?.addEventListener('click', createEtsyDraft);
+  $('createConfirmOverlay')?.addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) dismissCreateConfirm();
+  });
   $('resumeUploadBtn').addEventListener('click', resumePartialUpload);
   $('discardPartialDraftBtn').addEventListener('click', discardPartialDraft);
   $('openInEtsyBtn').addEventListener('click', openLastListingInEtsy);

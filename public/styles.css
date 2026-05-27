@@ -9,6 +9,10 @@
   --accent: #3d6e48;
   --accent-2: #5e8c69;
   --accent-soft: #e8efe0;
+  /* Active-store identity color. Set per store by JS (applyStoreColor); these
+     are just the pre-load fallback. */
+  --store-color: #3d6e48;
+  --store-color-soft: #e8efe0;
   --danger: #b04032;
   --warning-bg: #fdf6e3;
   --warning-border: #c97a18;
@@ -518,16 +522,25 @@ p { margin: 6px 0; color: var(--muted); line-height: 1.55; }
   top: var(--topbar-h);
   z-index: 150;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   flex-wrap: wrap;
-  gap: 8px var(--space-2);
+  gap: 6px var(--space-2);
   min-height: var(--store-banner-h);
   padding: var(--space-1) var(--space-3);
   border-radius: var(--radius-md);
-  border: 1px solid var(--accent);
-  border-left: 6px solid var(--accent);
-  background: var(--accent-soft);
+  border: 1px solid var(--border);
+  border-left: 6px solid var(--store-color);
+  background: var(--store-color-soft);
   box-shadow: var(--shadow-sm);
+}
+
+/* Color is a single reinforcing cue — the shop NAME is the identity signal. */
+.active-store-banner .asb-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--store-color);
+  flex: none;
 }
 
 .active-store-banner .asb-label {
@@ -539,10 +552,10 @@ p { margin: 6px 0; color: var(--muted); line-height: 1.55; }
 }
 
 .active-store-banner .asb-name {
-  font-size: 1.35rem;
+  font-size: 1.45rem;
   font-weight: 800;
   line-height: 1.1;
-  color: var(--accent);
+  color: var(--text);
 }
 
 .active-store-banner .asb-id {
@@ -600,10 +613,20 @@ p { margin: 6px 0; color: var(--muted); line-height: 1.55; }
   padding: var(--space-2) var(--space-3);
   margin-bottom: var(--space-2);
   border-radius: var(--radius-md);
-  border-left: 6px solid var(--accent);
-  background: var(--accent-soft);
+  border-left: 6px solid var(--store-color);
+  background: var(--store-color-soft);
 }
 
+.summary-store-dot {
+  align-self: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--store-color);
+  flex: none;
+}
+
+/* order:-1 keeps the label on its own first row above the dot + name. */
 .summary-store-label {
   font-size: 0.76rem;
   font-weight: 700;
@@ -611,13 +634,14 @@ p { margin: 6px 0; color: var(--muted); line-height: 1.55; }
   letter-spacing: 0.06em;
   color: var(--muted);
   width: 100%;
+  order: -1;
 }
 
 .summary-store-name {
   font-size: 1.5rem;
   font-weight: 800;
   line-height: 1.1;
-  color: var(--accent);
+  color: var(--text);
 }
 
 .summary-store-id {
@@ -1462,6 +1486,45 @@ button:focus-visible,
   gap: var(--space-3);
   box-shadow: var(--shadow-lg);
   animation: modal-pop-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ─── Create-draft confirmation modal ────────────────────── */
+.create-confirm-panel {
+  max-width: 480px;
+  border-top: 6px solid var(--store-color);
+  gap: var(--space-2);
+}
+
+.create-confirm-store {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.create-confirm-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--store-color);
+  flex: none;
+}
+
+.create-confirm-name {
+  font-size: 1.6rem;
+  font-weight: 800;
+  line-height: 1.1;
+  color: var(--text);
+}
+
+.create-confirm-id {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.create-confirm-id.asb-id-warn {
+  color: var(--warning-border);
 }
 
 @keyframes modal-fade-in {

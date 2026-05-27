@@ -44,6 +44,7 @@
 
   <main class="layout">
     <div id="activeStoreBanner" class="active-store-banner" role="status" aria-live="polite">
+      <span class="asb-dot" aria-hidden="true"></span>
       <span class="asb-label">Posting to</span>
       <span id="activeStoreBannerName" class="asb-name">—</span>
       <span id="activeStoreBannerId" class="asb-id"></span>
@@ -257,6 +258,7 @@
       <h2>Step 5: Create Etsy draft</h2>
       <p class="help">This creates an unpublished draft in Etsy and uploads your selected photos.</p>
       <div class="summary-store-header">
+        <span class="summary-store-dot" aria-hidden="true"></span>
         <span class="summary-store-label">Creating this draft in</span>
         <span id="summaryStore" class="summary-store-name">-</span>
         <span id="summaryStoreId" class="summary-store-id"></span>
@@ -359,6 +361,22 @@
       <div class="row gap wrap nav-row">
         <button id="releaseNotesViewOnGithubBtn" class="secondary" type="button">View on GitHub</button>
         <button id="releaseNotesCloseBtn" type="button">Got it</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="createConfirmOverlay" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="createConfirmTitle">
+    <div class="modal-panel create-confirm-panel">
+      <h2 id="createConfirmTitle">Create this draft in:</h2>
+      <div class="create-confirm-store">
+        <span class="create-confirm-dot" aria-hidden="true"></span>
+        <span id="createConfirmStoreName" class="create-confirm-name">the selected store</span>
+      </div>
+      <p id="createConfirmStoreId" class="create-confirm-id"></p>
+      <p class="help">An unpublished draft will be created in this shop and your selected photos uploaded. Double-check the shop before continuing.</p>
+      <div class="row gap wrap nav-row">
+        <button id="createConfirmCancelBtn" class="secondary" type="button">Cancel</button>
+        <button id="createConfirmProceedBtn" type="button">Create draft</button>
       </div>
     </div>
   </div>
