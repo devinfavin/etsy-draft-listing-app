@@ -883,6 +883,81 @@ function selectTaxonomy(match) {
   scheduleWizardStateSave();
 }
 
+// Step 5 has its own inline Etsy-category picker for the case where the AI
+// failed to auto-match and there's no stored default. It writes to the same
+// state.autoTaxonomyId as the Step 4 picker, so downstream code (intake
+// collection, missing-field check) just works.
+let s5TaxonomySearchTimer = null;
+let s5TaxonomySearchRequestId = 0;
+
+function onS5TaxonomySearchInput() {
+  if (s5TaxonomySearchTimer) clearTimeout(s5TaxonomySearchTimer);
+  const q = $('s5TaxonomySearchInput').value.trim();
+  s5TaxonomySearchTimer = setTimeout(() => runS5TaxonomySearch(q), 220);
+}
+
+async function runS5TaxonomySearch(query) {
+  const resultsEl = $('s5TaxonomyResults');
+  if (!resultsEl) return;
+  if (!query || query.length < 2) {
+    resultsEl.innerHTML = '';
+    resultsEl.classList.add('hidden');
+    return;
+  }
+  const myRequestId = ++s5TaxonomySearchRequestId;
+  try {
+    const res = await api(`/api/etsy/taxonomy-search?q=${encodeURIComponent(query)}`);
+    if (myRequestId !== s5TaxonomySearchRequestId) return;
+    renderS5TaxonomyResults(res.matches || []);
+  } catch (err) {
+    if (myRequestId !== s5TaxonomySearchRequestId) return;
+    resultsEl.innerHTML = `<div class="taxonomy-result-empty">${escapeHtml(err.message)}</div>`;
+    resultsEl.classList.remove('hidden');
+  }
+}
+
+function renderS5TaxonomyResults(matches) {
+  const resultsEl = $('s5TaxonomyResults');
+  if (!resultsEl) return;
+  resultsEl.innerHTML = '';
+  if (!matches.length) {
+    resultsEl.innerHTML = '<div class="taxonomy-result-empty">No matching categories. Try a different keyword.</div>';
+    resultsEl.classList.remove('hidden');
+    return;
+  }
+  for (const m of matches) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'taxonomy-result';
+    btn.innerHTML = `<span class="taxonomy-result-name">${escapeHtml(m.name)}</span><span class="taxonomy-result-id">#${escapeHtml(String(m.id))}</span>`;
+    btn.addEventListener('click', () => selectStep5Taxonomy(m));
+    resultsEl.appendChild(btn);
+  }
+  resultsEl.classList.remove('hidden');
+}
+
+function selectStep5Taxonomy(match) {
+  state.autoTaxonomyId = String(match.id);
+  state.autoTaxonomyLabel = match.name;
+  updateTaxonomyDisplay();
+  const selectedEl = $('s5TaxonomySelected');
+  if (selectedEl) {
+    selectedEl.textContent = `Selected: ${match.name} (#${match.id})`;
+    selectedEl.classList.remove('muted-text');
+  }
+  const resultsEl = $('s5TaxonomyResults');
+  if (resultsEl) {
+    resultsEl.innerHTML = '';
+    resultsEl.classList.add('hidden');
+  }
+  const input = $('s5TaxonomySearchInput');
+  if (input) input.value = '';
+  log(`Etsy category set to "${match.name}" (#${match.id})`);
+  renderStep5MissingFields();
+  updateStep5Summary();
+  scheduleWizardStateSave();
+}
+
 function showFieldError(errorId, message) {
   const el = $(errorId);
   if (!el) return;
@@ -2178,6 +2253,14 @@ function renderStep5MissingFields() {
     if (el) el.classList.toggle('hidden', !c.missing);
   }
 
+  if (taxonomyMissing) {
+    const sel = $('s5TaxonomySelected');
+    if (sel) {
+      sel.textContent = 'No category selected yet.';
+      sel.classList.add('muted-text');
+    }
+  }
+
   if (shippingMissing) {
     if (state.shippingProfiles.length > 0) {
       populateStep5ShippingSelect();
@@ -2205,7 +2288,6 @@ function collectStep5Overrides() {
   const overrides = {};
   const pairs = [
     ['s5WhenMadeWrap', () => $('s5WhenMade').value.trim(), 'when_made'],
-    ['s5TaxonomyWrap', () => $('s5TaxonomyId').value.trim(), 'taxonomy_id'],
     ['s5ShippingWrap', () => $('s5ShippingProfileId').value.trim(), 'shipping_profile_id'],
     ['s5ReadinessWrap', () => $('s5ReadinessStateId').value.trim(), 'readiness_state_id'],
   ];
@@ -2361,6 +2443,18 @@ function attachEvents() {
       $('taxonomyResults').classList.add('hidden');
     }
   });
+
+  const s5TaxInput = $('s5TaxonomySearchInput');
+  if (s5TaxInput) {
+    s5TaxInput.addEventListener('input', onS5TaxonomySearchInput);
+    s5TaxInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        s5TaxInput.value = '';
+        const r = $('s5TaxonomyResults');
+        if (r) { r.innerHTML = ''; r.classList.add('hidden'); }
+      }
+    });
+  }
   $('useExistingBtn').addEventListener('click', () => setStep(4));
 
   $('connectionPill').addEventListener('click', (e) => {
