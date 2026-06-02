@@ -100,6 +100,14 @@ function normalizeAccentColor(raw) {
   return /^#[0-9a-fA-F]{6}$/.test(hex) ? hex.toLowerCase() : '';
 }
 
+// Etsy expects these IDs as integers. Drop anything non-numeric so a stray
+// human label (e.g. "book" typed into the Step 5 fallback input) can't be
+// silently shipped to Etsy and rejected at draft-creation time.
+function numericIdOrEmpty(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  return /^\d+$/.test(s) ? s : '';
+}
+
 function normalizeStoreEntry(rawStore, index, legacyEtsy = null) {
   const fallback = defaultStoreForIndex(index);
   const source = rawStore && typeof rawStore === 'object' ? rawStore : {};
@@ -107,17 +115,22 @@ function normalizeStoreEntry(rawStore, index, legacyEtsy = null) {
   const legacyDefaults = legacyEnabled ? (legacyEtsy.defaults || {}) : {};
   const legacyShopId = legacyEnabled ? (legacyEtsy.shopId || '') : '';
 
+  const mergedDefaults = {
+    ...fallback.defaults,
+    ...legacyDefaults,
+    ...(source.defaults || {})
+  };
+  mergedDefaults.taxonomy_id = numericIdOrEmpty(mergedDefaults.taxonomy_id);
+  mergedDefaults.shipping_profile_id = numericIdOrEmpty(mergedDefaults.shipping_profile_id);
+  mergedDefaults.readiness_state_id = numericIdOrEmpty(mergedDefaults.readiness_state_id);
+
   return {
     key: String(source.key || fallback.key),
     label: String(source.label || fallback.label).trim() || fallback.label,
     shopId: String(source.shopId || legacyShopId || '').trim(),
     accentColor: normalizeAccentColor(source.accentColor),
     lastFolder: String(source.lastFolder || '').trim(),
-    defaults: {
-      ...fallback.defaults,
-      ...legacyDefaults,
-      ...(source.defaults || {})
-    }
+    defaults: mergedDefaults
   };
 }
 
@@ -1268,6 +1281,13 @@ function buildEtsyDraftBody({ intake, generated, cfg }) {
   const when_made = String(intake.whenMade || d.when_made || '').trim();
   const readiness_state_id = String(intake.readinessStateId || d.readiness_state_id || '').trim();
   const taxonomy_id = String(intake.taxonomyId || d.taxonomy_id || '').trim();
+
+  // Etsy requires taxonomy_id to be an integer. Catch a non-numeric value here
+  // with a readable error rather than letting Etsy reject the whole request
+  // with a generic "got string" message.
+  if (taxonomy_id && !/^\d+$/.test(taxonomy_id)) {
+    throw new Error(`Etsy taxonomy_id must be a numeric category ID (got "${taxonomy_id}"). Pick the Etsy category in Step 4 or clear the bad default in store settings.`);
+  }
 
   const requiredMap = {
     quantity,
