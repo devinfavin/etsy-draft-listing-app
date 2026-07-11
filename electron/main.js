@@ -52,7 +52,7 @@ function appUrl() {
 }
 
 function createWindow() {
-  const customIcon = path.join(PROJECT_ROOT, 'build', 'icon.ico');
+  const customIcon = path.join(PROJECT_ROOT, 'build', process.platform === 'win32' ? 'icon.ico' : 'icon.png');
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 900,
@@ -165,7 +165,9 @@ function registerUpdaterEvents() {
       cancelId: 1,
       title: 'Update ready',
       message: `Etsy Draft Listing Assistant ${info.version} is ready to install.`,
-      detail: 'The app will close briefly, install the update, then reopen.'
+      detail: process.platform === 'linux'
+        ? 'Your system will ask for your password to install the update. The app will close briefly, then reopen.'
+        : 'The app will close briefly, install the update, then reopen.'
     });
     if (choice.response === 0) {
       autoUpdater.quitAndInstall(true, true);
@@ -224,7 +226,7 @@ ipcMain.handle('dialog:pickFolder', async (_event, initialDirectory) => {
 });
 
 app.whenReady().then(async () => {
-  if (process.platform === 'win32') {
+  if (process.platform !== 'darwin') {
     Menu.setApplicationMenu(buildAppMenu());
   }
   const win = createWindow();

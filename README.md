@@ -30,8 +30,8 @@ For the **administrator** setting up the app:
 
 For the **end user** running the packaged app:
 
-- Windows 10 or 11
-- The installed `.exe` (built by the administrator below)
+- Windows 10 or 11, **or** Linux Mint 21/22 (or another 64-bit Ubuntu/Debian-based distro)
+- The installed `.exe` (Windows) or `.deb` (Linux), built by the administrator below
 - A folder of product photos (OneDrive / Google Drive / local folder all fine)
 
 ---
@@ -59,6 +59,8 @@ For the **end user** running the packaged app:
    ```
    %APPDATA%\Etsy Draft Listing Assistant\.env
    ```
+   (On Linux: `~/.config/Etsy Draft Listing Assistant/.env` — see the Linux section below.)
+
    Open that file in Notepad and fill in:
    ```
    ANTHROPIC_API_KEY=sk-ant-...
@@ -69,6 +71,81 @@ For the **end user** running the packaged app:
    Save, then restart the app. The yellow "Setup needed" banner at the top of the app disappears once all four keys are present.
 
 6. Inside the app, click the connection pill (top-right) for each store you want to use → it opens Etsy's OAuth flow in the user's default browser → after granting permission, the app auto-fetches the shop name and shop ID.
+
+---
+
+## Linux Mint setup (administrator)
+
+The app works the same on Linux Mint as on Windows — same wizard, same auto-update, same folder browser. Only the packaging differs.
+
+### Building the `.deb`
+
+**The Linux package cannot be built on plain Windows** — packaging requires Linux tools (`fpm`), and the bundle would contain Windows-native image-processing binaries (`sharp`). Two ways to build it:
+
+**Option A — GitHub Actions (easiest, no Linux machine needed):**
+
+Push your changes to `main`, then trigger the **Build Linux package** workflow — either on github.com (Actions tab → Build Linux package → Run workflow) or from a terminal:
+
+```powershell
+gh workflow run build-linux.yml
+```
+
+The workflow builds the `.deb` on an Ubuntu runner and attaches it (plus `latest-linux.yml`, which Linux auto-update reads) to the GitHub release whose tag matches the version in `package.json`. Download the `.deb` from the release page on the Linux machine.
+
+**Option B — build on a Linux machine** (the Mint machine itself, any Linux box, or WSL):
+
+1. Install Node.js 20+. Mint's default repos ship an older Node, so use one of:
+   ```bash
+   # nvm (no sudo needed)
+   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
+   # close and reopen the terminal, then:
+   nvm install 20
+
+   # or NodeSource
+   curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+   sudo apt-get install -y nodejs
+   ```
+
+2. Clone or copy this repo, then in the project folder:
+   ```bash
+   npm install
+   npm run build:linux
+   ```
+   Output lands in `dist-electron/` as `etsy-draft-listing-app_<version>_amd64.deb`.
+
+### Installing on the user's machine
+
+Either double-click the `.deb` (Mint opens it in the package installer — click **Install Package**), or from a terminal:
+
+```bash
+sudo apt install ./etsy-draft-listing-app_<version>_amd64.deb
+```
+
+The app then appears in the Mint menu as **Etsy Draft Listing Assistant** (search "Etsy"). Right-click the menu entry → **Add to desktop** if the user wants a desktop shortcut.
+
+### First launch / API keys on Linux
+
+Identical to Windows, except the config folder is:
+
+```
+~/.config/Etsy Draft Listing Assistant/
+```
+
+Fill in the same four keys in `~/.config/Etsy Draft Listing Assistant/.env` using the Text Editor (`xed`) or `nano`, then restart the app. **File menu → Open config folder** works there too.
+
+### Auto-update on Linux
+
+Same flow as Windows: the app checks GitHub Releases on startup, downloads the new `.deb` in the background, and prompts "Install and restart". The only difference is that Linux asks for the **user's system password** (the standard Mint authentication dialog) because the update installs through the package manager.
+
+For updates to reach Linux users, publish the Linux build alongside the Windows one — see "Updating to a new version" below.
+
+### Uninstalling on Linux
+
+```bash
+sudo apt remove etsy-draft-listing-app
+```
+
+Like on Windows, this keeps `~/.config/Etsy Draft Listing Assistant/` (keys, tokens, config); delete that folder manually for a fully clean removal.
 
 ---
 
@@ -94,6 +171,8 @@ Double-click the desktop shortcut → the app opens in its own window.
 | Etsy OAuth tokens | `%APPDATA%\Etsy Draft Listing Assistant\data\etsy_tokens.json` |
 | Generated listing records | `%APPDATA%\Etsy Draft Listing Assistant\data\items.json` |
 | Photo thumbnail cache | `%APPDATA%\Etsy Draft Listing Assistant\data\thumb-cache\` |
+
+On Linux, replace `%APPDATA%\Etsy Draft Listing Assistant\` with `~/.config/Etsy Draft Listing Assistant/` in every path above.
 
 You can open this folder from inside the app: **File menu → Open config folder**.
 
@@ -164,6 +243,12 @@ The user can also manually trigger a check via **File menu → Check for updates
    git push origin main --follow-tags
    ```
 
+5. **If you have Linux users**, trigger the Linux build for the same version (after the push in step 4, so the runner builds the bumped version):
+   ```powershell
+   gh workflow run build-linux.yml
+   ```
+   This builds the `.deb` on GitHub's servers and attaches it + the `latest-linux.yml` manifest to the release created in step 3. Until this runs, installed Linux copies won't see the new version.
+
 That's it. Within a minute or so, every installed copy of the app will see the new release and offer to update; once installed, the user gets the plain-English summary popup on first launch.
 
 ### Manual update (fallback for pre-v0.2.2 installs or air-gapped machines)
@@ -181,6 +266,8 @@ The Desktop and Start Menu shortcuts continue to work after the update.
 ---
 
 ## Uninstalling
+
+(For Linux, see "Uninstalling on Linux" in the Linux Mint section above.)
 
 1. Windows Settings → **Apps** → **Installed apps** → search **Etsy Draft Listing**
 2. Click the `…` menu → **Uninstall**
@@ -216,7 +303,8 @@ The build works fine without a custom icon — electron-builder falls back to th
 
 1. Create a `build/` folder at the project root.
 2. Place a Windows `.ico` at `build/icon.ico`. Recommended: a multi-resolution `.ico` containing 16x16, 24x24, 32x32, 48x48, 64x64, 128x128, 256x256.
-3. Re-run `npm run build:win`.
+3. For Linux, also place a 512x512 PNG at `build/icon.png`.
+4. Re-run `npm run build:win` / `npm run build:linux`.
 
 **Quick way to make one from a PNG:**
 - https://cloudconvert.com/png-to-ico (drop in a 512x512+ PNG, export as multi-resolution `.ico`)

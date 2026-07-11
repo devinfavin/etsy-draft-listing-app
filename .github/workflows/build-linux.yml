@@ -1,0 +1,40 @@
+name: Build Linux package
+
+# Manually triggered: Actions tab -> "Build Linux package" -> Run workflow
+# (or `gh workflow run build-linux.yml`). Builds the .deb from the latest
+# commit on the chosen branch and attaches it to the GitHub release whose
+# tag matches the version in package.json (vX.Y.Z), alongside the
+# latest-linux.yml manifest that Linux auto-update reads.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the .deb
+        run: npx electron-builder --linux --publish never
+
+      - name: Attach the .deb to this version's GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "Uploading Linux assets to release v$VERSION"
+          gh release upload "v$VERSION" \
+            dist-electron/*.deb \
+            dist-electron/latest-linux.yml \
+            --clobber --repo "$GITHUB_REPOSITORY"
