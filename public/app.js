@@ -2109,6 +2109,9 @@ function friendlyErrorMessage(err) {
 
 function logErrorDetails(err) {
   if (err.details) logTechnical(err.details);
+  // Server attaches the exact outgoing draft fields on Etsy create failures so
+  // the rejected title/payload is captured in the support log.
+  if (err.payload?.debug) logTechnical(err.payload.debug);
 }
 
 function escapeHtml(str) {

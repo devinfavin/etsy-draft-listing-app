@@ -253,8 +253,8 @@ function saveConfig(nextCfg) {
   return configCache;
 }
 
-function errorResponse(res, status, message, details) {
-  res.status(status).json({ ok: false, error: message, details });
+function errorResponse(res, status, message, details, debug) {
+  res.status(status).json({ ok: false, error: message, details, debug: debug || undefined });
 }
 
 function resolveSyncFolder(cfg) {
@@ -766,8 +766,27 @@ function replaceFancyDashes(text) {
   return String(text || '').replace(/[\u2013\u2014\u2212]/g, '-');
 }
 
+// Etsy title validation (createDraftListing): valid characters are letters,
+// numbers, punctuation, math symbols, whitespace, and ™ © ® — everything else
+// (currency/modifier symbols like $ ^ `, emoji, etc.) is rejected as
+// "invalid_characters". Separately, & % : + may each appear AT MOST ONCE; a
+// second one comes back as "too_many_invalid_characters" (e.g. "& can only be
+// use once"). Enforce both here so AI output, user edits, and restored drafts
+// are all covered. Char-set regex mirrors Etsy's documented pattern.
 function cleanTitleForEtsy(rawTitle) {
+  const seen = { '&': false, '%': false, ':': false, '+': false };
   const normalized = replaceFancyDashes(normalizeWhitespace(rawTitle))
+    .replace(/[^\p{L}\p{Nd}\p{P}\p{Sm}\p{Zs}™©®]/gu, ' ')
+    .replace(/[&%:+]/g, (ch) => {
+      if (!seen[ch]) {
+        seen[ch] = true;
+        return ch;
+      }
+      if (ch === '&') return ' and ';
+      if (ch === '+') return ' plus ';
+      return ' ';
+    })
+    .replace(/\s+/g, ' ')
     .replace(/\s*[-|,:;/]+\s*$/g, '')
     .trim();
   if (!normalized) return '';
@@ -951,6 +970,7 @@ function buildGeneratePrompt({ intake, cfg, selectedImages, includeImages }) {
     '- Punctuation rules (apply to title, description, bullet_specs, image_alt_text, and tags):',
     '  - Do NOT use em-dashes (—) or en-dashes (–) anywhere. Use plain ASCII hyphens (-), commas, or periods instead.',
     '  - Do NOT use smart/curly quotes (‘’“”). Use straight quotes if quoting is needed.',
+    '  - In the title: the characters &, %, :, and + may each be used AT MOST ONCE (Etsy rejects a second one). Prefer the word "and" over a second ampersand. Only letters, numbers, ordinary punctuation, and math symbols are allowed; avoid currency and other symbols like $, ^, and `.',
     '- etsy_materials: each entry must contain ONLY plain English letters, digits, and spaces. NO slashes, percent signs, hyphens, apostrophes, ampersands, parentheses, accents, em-dashes, or other punctuation. Example: write "100 Percent Cotton" not "100% Cotton"; "Cotton Polyester Blend" not "Cotton/Polyester"; "Button Down Fabric" not "Button-Down Fabric". Max 45 characters per entry.',
     '- Title: 90-130 characters preferred, hard max 140, keyword-first, clear and factual.',
     '- Description structure (in one field):',
@@ -1320,6 +1340,32 @@ function buildEtsyDraftBody({ intake, generated, cfg }) {
   }
 
   return params;
+}
+
+// Snapshot of the exact listing fields sent to Etsy, for debugging a rejected
+// draft. The title Etsy validates is read live from the (user-editable) field
+// and sanitized server-side, so the support log otherwise never records what
+// was actually on the wire. countOnce surfaces the &/%/:/+ duplicate that
+// triggers "too_many_invalid_characters".
+function etsyDraftDebugSnapshot(params, generated) {
+  const title = params.get('title') || '';
+  const countOnce = (ch) => (title.split(ch).length - 1);
+  return {
+    rawTitle: String(generated?.title ?? ''),
+    rawTitleLen: String(generated?.title ?? '').length,
+    sentTitle: title,
+    sentTitleLen: title.length,
+    sentTitleCharCounts: { '&': countOnce('&'), '%': countOnce('%'), ':': countOnce(':'), '+': countOnce('+') },
+    taxonomy_id: params.get('taxonomy_id') || '',
+    price: params.get('price') || '',
+    quantity: params.get('quantity') || '',
+    when_made: params.get('when_made') || '',
+    shipping_profile_id: params.get('shipping_profile_id') || '',
+    readiness_state_id: params.get('readiness_state_id') || '',
+    tags: params.get('tags') || '',
+    materials: params.get('materials') || '',
+    descriptionLen: (params.get('description') || '').length,
+  };
 }
 
 function extractEtsyListingId(createResp) {
@@ -2056,12 +2102,22 @@ app.post('/api/etsy/create-draft', async (req, res) => {
     };
 
     const createBody = buildEtsyDraftBody({ intake, generated, cfg: createCfg });
-    const createResp = await etsyApiFetch(`https://api.etsy.com/v3/application/shops/${shopId}/listings`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: createBody,
-      storeKey: activeStore.key
-    });
+    const outgoingDraft = etsyDraftDebugSnapshot(createBody, generated);
+    let createResp;
+    try {
+      createResp = await etsyApiFetch(`https://api.etsy.com/v3/application/shops/${shopId}/listings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: createBody,
+        storeKey: activeStore.key
+      });
+    } catch (createErr) {
+      // Attach the exact fields we sent so the failure is debuggable from the
+      // client support log (which never sees the outgoing payload otherwise).
+      console.error('Etsy create-listing failed. Outgoing draft fields:', JSON.stringify(outgoingDraft));
+      createErr.debug = { outgoingDraft };
+      throw createErr;
+    }
 
     const listingId = extractEtsyListingId(createResp);
     if (!listingId) {
@@ -2134,7 +2190,7 @@ app.post('/api/etsy/create-draft', async (req, res) => {
       note: 'Draft created. Review in Etsy Seller dashboard before publishing.'
     });
   } catch (err) {
-    errorResponse(res, err.status || 500, err.message, err.details || null);
+    errorResponse(res, err.status || 500, err.message, err.details || null, err.debug || null);
   }
 });
 
