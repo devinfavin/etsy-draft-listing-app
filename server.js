@@ -1302,6 +1302,25 @@ function buildEtsyDraftBody({ intake, generated, cfg }) {
   const readiness_state_id = String(intake.readinessStateId || d.readiness_state_id || '').trim();
   const taxonomy_id = String(intake.taxonomyId || d.taxonomy_id || '').trim();
 
+  const who_made = ['i_did', 'collective', 'someone_else'].includes(String(intake.whoMade))
+    ? String(intake.whoMade)
+    : (d.who_made || 'someone_else');
+  const is_supply = typeof intake.isSupply === 'boolean' ? intake.isSupply : Boolean(d.is_supply);
+
+  // Etsy eligibility: every listing must be handmade, vintage, or a craft supply.
+  // A finished product "made by another company or person" that isn't vintage
+  // (20+ years old) is rejected with "Oh dear, you cannot sell this item on Etsy."
+  // Catch it here with a clear, actionable message. Kept in sync with the
+  // client's NON_VINTAGE_ERAS set in app.js.
+  const NON_VINTAGE = new Set(['made_to_order', '2020_2026', '2010_2019', '2007_2009']);
+  if (!is_supply && who_made === 'someone_else' && when_made && NON_VINTAGE.has(when_made)) {
+    throw new Error(
+      'Etsy can only list an item if it is handmade, vintage (20+ years old), or a craft supply. ' +
+      'This one is set as made by another company or person with a newer era, which Etsy rejects. ' +
+      'Choose an era of 2006 or earlier, set who made it to yourself, or mark it as a craft supply.'
+    );
+  }
+
   // Etsy requires taxonomy_id to be an integer. Catch a non-numeric value here
   // with a readable error rather than letting Etsy reject the whole request
   // with a generic "got string" message.
@@ -1314,7 +1333,7 @@ function buildEtsyDraftBody({ intake, generated, cfg }) {
     title,
     description,
     price,
-    who_made: d.who_made || 'someone_else',
+    who_made,
     when_made,
     taxonomy_id,
     shipping_profile_id: shippingProfileId,
@@ -1329,7 +1348,7 @@ function buildEtsyDraftBody({ intake, generated, cfg }) {
   }
 
   params.append('state', 'draft');
-  params.append('is_supply', String(Boolean(d.is_supply)));
+  params.append('is_supply', String(is_supply));
 
   if (generated?.etsy_materials?.length) {
     params.append('materials', generated.etsy_materials.slice(0, 13).join(','));
@@ -1360,6 +1379,8 @@ function etsyDraftDebugSnapshot(params, generated) {
     price: params.get('price') || '',
     quantity: params.get('quantity') || '',
     when_made: params.get('when_made') || '',
+    who_made: params.get('who_made') || '',
+    is_supply: params.get('is_supply') || '',
     shipping_profile_id: params.get('shipping_profile_id') || '',
     readiness_state_id: params.get('readiness_state_id') || '',
     tags: params.get('tags') || '',

@@ -440,6 +440,7 @@ function loadActiveStoreIntoForm() {
   if (!store) return;
   populateReadinessStateDropdowns(state.readinessStates);
   populateShippingProfileDropdowns(state.shippingProfiles);
+  applyStoreDefaultsToStep3();
   updateShopSummary();
   applyStoreColor(store);
   renderActiveStoreBanner();
@@ -524,6 +525,8 @@ function collectIntake() {
   return {
     type: $('f_type').value.trim(),
     whenMade: $('f_whenMade').value,
+    whoMade: $('f_whoMade')?.value || '',
+    isSupply: $('f_isSupply')?.value === 'true',
     quantity: Number($('f_quantity').value || 1),
     price: $('f_price').value.trim(),
     notes: $('f_notes').value.trim(),
@@ -531,6 +534,62 @@ function collectIntake() {
     readinessStateId: $('f_readinessStateId').value.trim(),
     taxonomyId: state.autoTaxonomyId || '',
   };
+}
+
+// Etsy eras newer than 20 years — not vintage-eligible. Kept in sync with the
+// server's NON_VINTAGE set in buildEtsyDraftBody.
+const NON_VINTAGE_ERAS = new Set(['made_to_order', '2020_2026', '2010_2019', '2007_2009']);
+
+function isVintageEra(whenMade) {
+  const v = String(whenMade || '').trim();
+  return Boolean(v) && !NON_VINTAGE_ERAS.has(v);
+}
+
+// Every Etsy listing must qualify as handmade, vintage, or a craft supply.
+// A finished product "made by another company/person" that isn't vintage is
+// rejected with "Oh dear, you cannot sell this item on Etsy." Catch it before
+// we ever call Etsy so the user gets an actionable message instead.
+function etsyEligibility({ whoMade, isSupply, whenMade }) {
+  if (isSupply) return { ok: true };
+  if (whoMade === 'i_did' || whoMade === 'collective') return { ok: true };
+  if (isVintageEra(whenMade)) return { ok: true };
+  return {
+    ok: false,
+    message:
+      'Etsy can only list this if it’s handmade, vintage (20+ years old), or a craft supply. ' +
+      'It’s set as made by another company or person with a newer era. To fix it: pick an era of ' +
+      '2006 or earlier, change “Who made it” to yourself, or set “What is it” to a craft supply.',
+  };
+}
+
+function currentEligibility() {
+  return etsyEligibility({
+    whoMade: $('f_whoMade')?.value || '',
+    isSupply: $('f_isSupply')?.value === 'true',
+    whenMade: $('f_whenMade')?.value || '',
+  });
+}
+
+// Live feedback as the who/what/when selects change: show the eligibility error
+// only once an era has been chosen, so it doesn't nag on a blank fresh form.
+function refreshEligibilityHint() {
+  const whenMade = $('f_whenMade')?.value || '';
+  const el = $('f_eligibilityError');
+  if (!el) return;
+  const { ok, message } = currentEligibility();
+  showFieldError('f_eligibilityError', whenMade && !ok ? message : '');
+}
+
+function applyStoreDefaultsToStep3() {
+  const d = getActiveStore()?.defaults || {};
+  const whoSel = $('f_whoMade');
+  if (whoSel) {
+    whoSel.value = ['i_did', 'collective', 'someone_else'].includes(d.who_made)
+      ? d.who_made
+      : 'someone_else';
+  }
+  const supSel = $('f_isSupply');
+  if (supSel) supSel.value = d.is_supply ? 'true' : 'false';
 }
 
 function setGeneratedOutput(out) {
@@ -586,6 +645,8 @@ function captureWizardState() {
     intake: {
       type: $('f_type')?.value || '',
       whenMade: $('f_whenMade')?.value || '',
+      whoMade: $('f_whoMade')?.value || '',
+      isSupply: $('f_isSupply')?.value || '',
       quantity: $('f_quantity')?.value || '',
       price: $('f_price')?.value || '',
       notes: $('f_notes')?.value || '',
@@ -643,6 +704,8 @@ function applyWizardStateToForm(snapshot) {
     const i = snapshot.intake || {};
     if ($('f_type')) $('f_type').value = i.type || '';
     if ($('f_whenMade')) $('f_whenMade').value = i.whenMade || '';
+    if ($('f_whoMade') && i.whoMade) $('f_whoMade').value = i.whoMade;
+    if ($('f_isSupply') && i.isSupply) $('f_isSupply').value = i.isSupply;
     if ($('f_quantity')) $('f_quantity').value = i.quantity || '1';
     if ($('f_price')) $('f_price').value = i.price || '';
     if ($('f_notes')) $('f_notes').value = i.notes || '';
@@ -696,7 +759,8 @@ function resetStep3Form() {
   $('f_readinessStateId').value = '';
   $('f_shippingProfileId').value = '';
   $('f_notes').value = '';
-  for (const errId of ['f_typeError','f_priceError','f_quantityError','f_whenMadeError','f_readinessStateIdError','f_shippingProfileIdError']) {
+  applyStoreDefaultsToStep3();
+  for (const errId of ['f_typeError','f_priceError','f_quantityError','f_whenMadeError','f_eligibilityError','f_readinessStateIdError','f_shippingProfileIdError']) {
     showFieldError(errId, '');
   }
 }
@@ -1074,6 +1138,15 @@ function validateStep3() {
     (el) => Number(el.value) >= 1);
   check('f_whenMade', 'f_whenMadeError', 'Pick an era so Etsy will accept the listing.',
     (el) => Boolean(el.value.trim()));
+
+  const eligibility = currentEligibility();
+  if (eligibility.ok) {
+    showFieldError('f_eligibilityError', '');
+  } else {
+    showFieldError('f_eligibilityError', eligibility.message);
+    valid = false;
+    firstInvalid = firstInvalid || $('f_whenMade');
+  }
   check('f_readinessStateId', 'f_readinessStateIdError',
     state.readinessStates.length ? 'Pick a readiness state.' : 'Connect Etsy first to load readiness states.',
     (el) => Boolean(el.value.trim()));
@@ -2608,8 +2681,13 @@ function attachEvents() {
   $('f_shippingProfileId').addEventListener('change', updateStep5Summary);
   $('f_readinessStateId').addEventListener('change', updateStep5Summary);
 
+  // Live eligibility feedback as the who/what/when selects change.
+  for (const id of ['f_whenMade', 'f_whoMade', 'f_isSupply']) {
+    $(id)?.addEventListener('change', refreshEligibilityHint);
+  }
+
   // Persist wizard state on any intake change so an accidental close can be resumed.
-  for (const id of ['f_type', 'f_price', 'f_quantity', 'f_whenMade', 'f_notes', 'f_shippingProfileId', 'f_readinessStateId']) {
+  for (const id of ['f_type', 'f_price', 'f_quantity', 'f_whenMade', 'f_whoMade', 'f_isSupply', 'f_notes', 'f_shippingProfileId', 'f_readinessStateId']) {
     const el = $(id);
     if (!el) continue;
     el.addEventListener('input', scheduleWizardStateSave);

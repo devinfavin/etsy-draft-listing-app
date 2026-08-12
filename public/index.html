@@ -182,6 +182,24 @@
         </label>
       </div>
       <div class="grid two">
+        <label class="block"><span class="field-label">Who made it?<span class="required-star">*</span></span>
+          <select id="f_whoMade">
+            <option value="someone_else">Another company or person</option>
+            <option value="i_did">I made it</option>
+            <option value="collective">A member of my shop</option>
+          </select>
+          <p class="help">Reselling an item made by someone else? Etsy only allows it if it's vintage (20+ years old).</p>
+        </label>
+        <label class="block"><span class="field-label">What is it?<span class="required-star">*</span></span>
+          <select id="f_isSupply">
+            <option value="false">A finished product</option>
+            <option value="true">A craft supply or tool</option>
+          </select>
+          <p class="help">Supplies and tools can be any age, handmade or not.</p>
+        </label>
+      </div>
+      <p id="f_eligibilityError" class="field-error hidden"></p>
+      <div class="grid two">
         <label class="block"><span class="field-label">Readiness state<span class="required-star">*</span></span>
           <select id="f_readinessStateId">
             <option value="">Select a readiness state…</option>
